@@ -788,10 +788,21 @@
         flex-shrink: 0;
         align-self: center;
         vertical-align: middle;
-        margin-left: 8px;
-        margin-right: 4px;
-        position: relative;
-        z-index: 5;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        position: static !important;
+        z-index: auto !important;
+        float: none !important;
+        inset: auto !important;
+      }
+      [data-veritas-li-name-wrap="1"] {
+        display: inline-flex !important;
+        align-items: center !important;
+        flex-wrap: nowrap !important;
+        gap: 8px !important;
+        vertical-align: middle !important;
+        max-width: 100%;
+        position: static !important;
       }
       .veritas-account-badge--linkedin.veritas-ig-realness--loading {
         background: #e5e7eb !important;
@@ -1935,10 +1946,11 @@
       slotSeen.add(slot);
       takenKeys.add(scoreKey.toLowerCase());
       a.setAttribute(SOCIAL_TAG, "1");
-      attachAccountScoreBadge(a, scoreKey, false, "veritas-account-badge--linkedin");
+      const nameTarget = resolveLinkedInFeedNameTarget(a);
+      attachAccountScoreBadge(nameTarget, scoreKey, false, "veritas-account-badge--linkedin");
     }
 
-    // Clean badges that landed in the wrong chrome.
+    // Clean badges that landed in the wrong chrome or still overlay names.
     document.querySelectorAll(".veritas-account-badge--linkedin").forEach((b) => {
       if (b.closest("aside, nav, footer, .scaffold-layout__aside, .global-nav")) b.remove();
     });
@@ -1980,40 +1992,61 @@
     return best;
   }
 
-  /** Place score immediately after the LinkedIn display name on the same line. */
+  /** Place score beside the LinkedIn display name — never stacked on top of it. */
   function placeLinkedInScoreNextToName(badge, nameEl) {
+    if (!(nameEl instanceof HTMLElement) || !nameEl.parentNode) return;
+
     badge.classList.add("veritas-ig-realness--next-to-handle");
-    badge.style.display = "inline-flex";
-    badge.style.flexShrink = "0";
-    badge.style.alignSelf = "center";
+    badge.style.setProperty("position", "static", "important");
+    badge.style.setProperty("z-index", "auto", "important");
+    badge.style.setProperty("display", "inline-flex", "important");
+    badge.style.setProperty("flex-shrink", "0", "important");
+    badge.style.setProperty("float", "none", "important");
+    badge.style.setProperty("inset", "auto", "important");
+    badge.style.marginLeft = "0";
+    badge.style.marginRight = "0";
     badge.style.verticalAlign = "middle";
-    badge.style.marginLeft = "8px";
-    badge.style.marginRight = "4px";
 
-    if (!(nameEl instanceof HTMLElement)) {
-      return;
-    }
+    // Prefer the full actor-title / name lockup, not a nested absolute span.
+    let target =
+      nameEl.closest?.(
+        ".update-components-actor__title, .update-components-actor__name, .feed-shared-actor__name, .artdeco-entity-lockup__title, a[href*='/in/']"
+      ) || nameEl;
 
-    // h1 / name block: insert after the name span, before pronouns like He/Him.
     if (nameEl.tagName === "H1" || nameEl.matches?.("h1")) {
-      const kids = Array.from(nameEl.querySelectorAll(":scope > span, :scope > a"));
-      const nameSpan = kids.find((s) => {
-        const t = (s.textContent || "").replace(/\s+/g, " ").trim();
-        if (!t || t.length < 2) return false;
-        if (/^(he\/him|she\/her|they\/them)$/i.test(t)) return false;
-        if (/^\d+(st|nd|rd|th)$/i.test(t)) return false;
-        return true;
-      });
-      if (nameSpan) {
-        nameSpan.insertAdjacentElement("afterend", badge);
-        return;
+      target = nameEl;
+    }
+
+    // Already wrapped — just append badge if missing.
+    const existingWrap = target.closest?.("[data-veritas-li-name-wrap='1']");
+    if (existingWrap) {
+      if (!existingWrap.querySelector(".veritas-account-badge--linkedin")) {
+        existingWrap.appendChild(badge);
       }
-      nameEl.insertAdjacentElement("afterend", badge);
       return;
     }
 
-    // Feed author link: after the link text.
-    nameEl.insertAdjacentElement("afterend", badge);
+    // Inline wrap: [Name][100] — keeps badge out of LinkedIn absolute layers.
+    const wrap = document.createElement("span");
+    wrap.setAttribute("data-veritas-li-name-wrap", "1");
+    wrap.style.cssText =
+      "display:inline-flex!important;align-items:center!important;flex-wrap:nowrap!important;gap:8px!important;vertical-align:middle;max-width:100%;position:static!important;";
+    target.parentNode.insertBefore(wrap, target);
+    wrap.appendChild(target);
+    wrap.appendChild(badge);
+  }
+
+  function resolveLinkedInFeedNameTarget(anchor) {
+    if (!(anchor instanceof HTMLElement)) return anchor;
+    const title =
+      anchor.closest(".update-components-actor__title") ||
+      anchor.closest(".update-components-actor__name") ||
+      anchor.closest(".feed-shared-actor__name") ||
+      anchor.closest(".artdeco-entity-lockup__title");
+    if (title) return title;
+    // Prefer the outermost profile link that still shows the name text.
+    const link = anchor.closest("a[href*='/in/']") || anchor;
+    return link;
   }
 
   function scanRedditAccountBadges() {
