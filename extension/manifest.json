@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Veritas Trust Layer",
-  "version": "0.2.1",
+  "version": "0.2.6",
   "description": "Credibility scores, AI/bot probability, and Veritas Insight injected into your feed.",
   "action": {
     "default_title": "Veritas"
@@ -14,6 +14,9 @@
     "http://127.0.0.1:8000/*",
     "http://localhost:5050/*",
     "http://localhost:5051/*",
+    "http://127.0.0.1:5051/*",
+    "http://localhost:5060/*",
+    "http://127.0.0.1:5060/*",
     "https://x.com/*",
     "https://twitter.com/*",
     "https://www.linkedin.com/*",

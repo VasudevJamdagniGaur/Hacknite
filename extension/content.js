@@ -2114,18 +2114,18 @@
     head.className = "veritas-check-ai-head";
     const title = document.createElement("span");
     title.className = "veritas-check-ai-title";
-    title.textContent = "Veritas AI";
+    title.textContent = "Check AI";
     const ver = document.createElement("span");
     ver.className = `veritas-check-ai-verdict ${
       leansAi ? "veritas-check-ai-verdict--ai" : "veritas-check-ai-verdict--real"
     }`;
-    ver.textContent = leansAi ? "AI-leaning" : "Real-leaning";
+    ver.textContent = String(aiPct);
     head.appendChild(title);
     head.appendChild(ver);
 
     const meter = document.createElement("div");
     meter.className = "veritas-check-ai-meter";
-    meter.innerHTML = `<span>AI likelihood</span><strong>${aiPct}%</strong>`;
+    meter.innerHTML = `<span>AI score (0=Real · 100=AI)</span><strong>${aiPct}</strong>`;
 
     const barWrap = document.createElement("div");
     barWrap.className = "veritas-check-ai-bar";
@@ -2136,10 +2136,10 @@
     const expl = document.createElement("p");
     expl.className = "veritas-check-ai-expl";
     expl.textContent =
-      `Confidence: ${conf}. Real likelihood: ${Number.isFinite(realPct) ? realPct : "—"}%. ` +
-      `AEGIS (fully AI-generated): ${Number.isFinite(aegisPct) ? aegisPct : "—"}%. ` +
-      `VideoMAE (facial/deepfake): ${Number.isFinite(maePct) ? maePct : "—"}%. ` +
-      `Probabilistic estimate — not a definitive label.`;
+      `AEGIS: ${Number.isFinite(aegisPct) ? aegisPct : "—"} · ` +
+      `VideoMAE: ${Number.isFinite(maePct) ? maePct : "—"} · ` +
+      `Real: ${Number.isFinite(realPct) ? realPct : "—"} · ` +
+      `Confidence: ${conf}`;
 
     card.appendChild(head);
     card.appendChild(meter);
@@ -2172,7 +2172,7 @@
         host.getAttribute("data-veritas-reel-checkai-host") === "1" ||
         (typeof isInstagramReelSurface === "function" && isInstagram && isInstagramReelSurface());
 
-      loadingCard.textContent = onReel ? "Capturing snap..." : "Analyzing image…";
+      loadingCard.textContent = onReel ? "Capturing reel frames..." : "Analyzing image…";
       panel.appendChild(loadingCard);
       btn.disabled = true;
 
@@ -2186,22 +2186,27 @@
             throw new Error("No reel video found");
           }
 
-          let snap = await captureSingleReelSnap(video, [host]);
-          if (!snap) {
-            // Last resort: full media capture helper (tab crop).
-            const media = await captureMediaForCheckAi(video, { hideEls: [host] });
-            snap = media?.imageBase64 || null;
+          loadingCard.textContent = "Building clip for AEGIS + VideoMAE...";
+          let payload = await prepareReelSnapDetectPayload(video, { hideEls: [host] });
+          if (!payload) {
+            payload = await prepareReelVideoPayload(video);
           }
-          if (!snap) throw new Error("Could not capture reel snap");
+          if (!payload) {
+            throw new Error(
+              "Could not capture reel frames for AEGIS/VideoMAE. Try another reel or wait for playback."
+            );
+          }
 
-          loadingCard.textContent = "Scoring with Socitea...";
-          const smallSnap = await downscaleDataUrlForSocitea(snap, 720);
-          const result = await checkAiAnalyzeSocitea({ imageBase64: smallSnap });
+          loadingCard.textContent = "Running AEGIS + VideoMAE...";
+          const data = await requestDetectVideo(payload);
           if (panel.dataset.veritasCheckAiDismissed === "1") return;
+          if (!data || data.success !== true) {
+            throw new Error(data?.error || "AEGIS/VideoMAE detection failed");
+          }
 
-          renderReelAiScore(panel, result);
+          renderReelVideoDetectResult(panel, data);
           setCheckAiButtonAfterResult(btn, {
-            verdict: Number(result.aiProbability) >= 50 ? "AI-generated" : "Authentic",
+            verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
           });
           return;
         }
@@ -2217,7 +2222,8 @@
         panel.textContent = "";
         const errCard = document.createElement("div");
         errCard.className = "veritas-check-ai-card veritas-check-ai-card--err";
-        errCard.textContent = String(e?.message || e || "Check AI failed");
+        const msg = String(e?.message || e || "Check AI failed");
+        errCard.textContent = msg;
         panel.appendChild(errCard);
         resetCheckAiButton(btn);
       } finally {
@@ -2311,17 +2317,31 @@
     return null;
   }
 
-  function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result || "");
-        const m = dataUrl.match(/^data:[^;]+;base64,(.+)$/);
-        resolve(m ? m[1] : dataUrl.replace(/^data:[^;]+;base64,/, ""));
-      };
-      reader.onerror = () => reject(reader.error || new Error("Failed to read video blob"));
-      reader.readAsDataURL(blob);
-    });
+  /** Encode blob for service-worker detect (base64 survives messaging; ArrayBuffer often does not). */
+  async function blobToDetectPayload(blob, filename) {
+    if (!blob || blob.size < 256) throw new Error("empty clip");
+    if (blob.size > VIDEO_AI_MAX_BASE64_CHARS * 0.75) throw new Error("clip too large");
+    const buf = await blob.arrayBuffer();
+    if (!buf || buf.byteLength < 256) throw new Error("empty clip");
+    const videoBase64 = arrayBufferToBase64(buf);
+    if (!videoBase64 || videoBase64.length > VIDEO_AI_MAX_BASE64_CHARS) {
+      throw new Error("encoded clip too large");
+    }
+    return {
+      videoBase64,
+      mimeType: blob.type || "video/webm",
+      filename: filename || "reel-clip.webm",
+    };
+  }
+
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunk = 0x8000;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
   }
 
   /**
@@ -2498,15 +2518,7 @@
       const snaps = await captureReelSnapsForDetect(video, hideEls, 16);
       if (!snaps.length) return null;
       const blob = await encodeSnapsToWebmBlob(snaps);
-      if (!blob || blob.size < 256) return null;
-      if (blob.size > VIDEO_AI_MAX_BASE64_CHARS * 0.75) return null;
-      const videoBase64 = await blobToBase64(blob);
-      if (!videoBase64 || videoBase64.length > VIDEO_AI_MAX_BASE64_CHARS) return null;
-      return {
-        videoBase64,
-        mimeType: blob.type || "video/webm",
-        filename: "reel-snap.webm",
-      };
+      return await blobToDetectPayload(blob, "reel-snap.webm");
     } catch {
       return null;
     }
@@ -2524,19 +2536,7 @@
         const resp = await fetch(access.url);
         if (!resp.ok) throw new Error(`blob fetch ${resp.status}`);
         const blob = await resp.blob();
-        if (!blob || blob.size < 256) throw new Error("empty blob");
-        if (blob.size > VIDEO_AI_MAX_BASE64_CHARS * 0.75) {
-          throw new Error("blob too large for extension messaging");
-        }
-        const videoBase64 = await blobToBase64(blob);
-        if (!videoBase64 || videoBase64.length > VIDEO_AI_MAX_BASE64_CHARS) {
-          throw new Error("encoded blob too large");
-        }
-        return {
-          videoBase64,
-          mimeType: blob.type || "video/mp4",
-          filename: "reel.mp4",
-        };
+        return await blobToDetectPayload(blob, "reel.mp4");
       } catch {
         /* fall through to captureStream */
       }
@@ -2544,17 +2544,7 @@
 
     try {
       const clip = await recordShortClipFromVideo(video, 10000);
-      if (!clip || clip.size < 256) throw new Error("empty clip");
-      if (clip.size > VIDEO_AI_MAX_BASE64_CHARS * 0.75) throw new Error("clip too large");
-      const videoBase64 = await blobToBase64(clip);
-      if (!videoBase64 || videoBase64.length > VIDEO_AI_MAX_BASE64_CHARS) {
-        throw new Error("encoded clip too large");
-      }
-      return {
-        videoBase64,
-        mimeType: clip.type || "video/webm",
-        filename: "reel-clip.webm",
-      };
+      return await blobToDetectPayload(clip, "reel-clip.webm");
     } catch {
       return null;
     }
@@ -2564,9 +2554,17 @@
     const bg = await sendMessageToExtension({ type: "VERITAS_DETECT_VIDEO", ...payload });
     if (bg) {
       if (bg.ok === true && bg.data && bg.data.success === true) return bg.data;
-      throw new Error(formatExtensionMessagingError(bg?.error || "Unable to analyze this video"));
+      const err = formatExtensionMessagingError(bg?.error || "Unable to analyze this video");
+      if (/failed to fetch|ECONNREFUSED|could not reach|network/i.test(err)) {
+        throw new Error(
+          "Cannot reach AEGIS/VideoMAE. Open http://127.0.0.1:5051/health in Chrome — if it fails, run: npm run install-autostart"
+        );
+      }
+      throw new Error(err);
     }
-    throw new Error("Unable to analyze this video");
+    throw new Error(
+      "Extension background unreachable. Reload Veritas on chrome://extensions, then refresh this tab."
+    );
   }
 
   function formatConfidenceLabel(confidence) {

@@ -7,11 +7,83 @@
  */
 const VERITAS_API_BASE = "http://localhost:5000/api";
 const VERITAS_DETECT_URL = "http://127.0.0.1:8000/detect";
+/** Direct AEGIS + VideoMAE service (no Node backend required for Reels Check AI). */
+const VIDEO_DETECTOR_URLS = [
+  "http://127.0.0.1:5051",
+  "http://localhost:5051",
+];
+/** Tiny keepalive agent — auto-starts video-detector when needed. */
+const LOCAL_AGENT_URLS = [
+  "http://127.0.0.1:5060",
+  "http://localhost:5060",
+];
 /** Socitea Gemini vision backend (see GET /health). */
 const SOCITEA_BASE_URL = "https://socitea.onrender.com";
 const SOCITEA_CHAT_URL = `${SOCITEA_BASE_URL}/chat`;
 const SOCITEA_HEALTH_URL = `${SOCITEA_BASE_URL}/health`;
 
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchOk(url, ms = 4000) {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { method: "GET", cache: "no-store", signal: ctrl.signal });
+    return r.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+async function firstHealthyBase(bases, path = "/health", ms = 3000) {
+  for (const base of bases) {
+    if (await fetchOk(`${base}${path}`, ms)) return base;
+  }
+  return null;
+}
+
+/**
+ * Make sure AEGIS/VideoMAE is up. Uses local-agent (:5060) when installed;
+ * otherwise just waits briefly if :5051 is already healthy.
+ * @returns {Promise<string|null>} healthy detector base URL
+ */
+async function ensureVideoDetectorReady() {
+  let base = await firstHealthyBase(VIDEO_DETECTOR_URLS, "/health", 3000);
+  if (base) return base;
+
+  for (const agent of LOCAL_AGENT_URLS) {
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 180000);
+      const r = await fetch(`${agent}/ensure`, {
+        method: "POST",
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
+      clearTimeout(tid);
+      if (r.ok) {
+        const j = await r.json().catch(() => null);
+        if (j && j.ok) {
+          base = await firstHealthyBase(VIDEO_DETECTOR_URLS, "/health", 5000);
+          if (base) return base;
+        }
+      }
+    } catch {
+      /* try next agent host */
+    }
+  }
+
+  for (let i = 0; i < 20; i++) {
+    base = await firstHealthyBase(VIDEO_DETECTOR_URLS, "/health", 3000);
+    if (base) return base;
+    await sleepMs(2000);
+  }
+  return null;
+}
 function hashHandle(handle) {
   let h = 0;
   const s = String(handle);
@@ -101,7 +173,14 @@ async function scoreSocialHandle(handle) {
   };
 }
 
-chrome.runtime.onInstalled.addListener(() => {});
+chrome.runtime.onInstalled.addListener(() => {
+  ensureVideoDetectorReady().catch(() => {});
+});
+chrome.runtime.onStartup?.addListener?.(() => {
+  ensureVideoDetectorReady().catch(() => {});
+});
+// Also nudge detectors whenever the service worker wakes.
+ensureVideoDetectorReady().catch(() => {});
 
 /**
  * POST /api/analyze from the service worker so https sites (Instagram, X, …)
@@ -190,10 +269,6 @@ function stripDataUrlBase64(raw) {
   const s = String(raw || "").trim();
   const m = s.match(/^data:image\/[a-z0-9+.-]+;base64,(.+)$/i);
   return m ? m[1] : s;
-}
-
-function sleepMs(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function base64ImageToDownscaledJpegBase64(input, maxSide = 720) {
@@ -458,20 +533,62 @@ function analyzeTextViaApi(text, username, userId, source) {
     });
 }
 
+function stripBase64Payload(b64) {
+  let raw = String(b64 || "").replace(/\s+/g, "");
+  // data:video/webm;codecs=vp9;base64,XXXX — must allow params before "base64,"
+  const marker = ";base64,";
+  const idx = raw.toLowerCase().indexOf(marker);
+  if (idx >= 0) raw = raw.slice(idx + marker.length);
+  else if (/^data:/i.test(raw)) {
+    const comma = raw.indexOf(",");
+    if (comma >= 0) raw = raw.slice(comma + 1);
+  }
+  return raw.replace(/-/g, "+").replace(/_/g, "/");
+}
+
 function base64ToUint8Array(b64) {
-  const raw = String(b64 || "").replace(/^data:[^;]+;base64,/i, "");
-  const bin = atob(raw);
+  let raw = stripBase64Payload(b64);
+  if (!raw) throw new Error("Empty video base64");
+  const pad = raw.length % 4;
+  if (pad === 1) throw new Error("Video data is not correctly encoded");
+  if (pad) raw += "=".repeat(4 - pad);
+  if (/[^A-Za-z0-9+/=]/.test(raw)) {
+    throw new Error("Video data is not correctly encoded");
+  }
+  let bin;
+  try {
+    bin = atob(raw);
+  } catch {
+    throw new Error("Video data is not correctly encoded");
+  }
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 
+function coerceVideoBytes(input) {
+  if (!input) return null;
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (ArrayBuffer.isView(input)) {
+    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  }
+  // Some Chrome builds deliver cloned buffers as { byteLength, ... } without prototype.
+  if (typeof input === "object" && input.byteLength > 0 && typeof input.slice === "function") {
+    try {
+      return new Uint8Array(input);
+    } catch {
+      /* fall through */
+    }
+  }
+  return null;
+}
+
 /**
  * Fetch an accessible video URL (extension host permissions) or accept bytes,
- * then POST multipart to /api/detect-video. Does not bypass DRM/CORS via hacks —
- * fetch uses normal extension-allowed networking.
+ * then POST multipart to AEGIS/VideoMAE on :5051 (falls back to Node proxy :5000).
  *
- * @param {{ videoUrl?: string, videoBase64?: string, mimeType?: string, filename?: string }} payload
+ * @param {{ videoUrl?: string, videoBase64?: string, videoBuffer?: ArrayBuffer|Uint8Array, mimeType?: string, filename?: string }} payload
  */
 function detectVideoViaApi(payload) {
   const run = async () => {
@@ -479,7 +596,10 @@ function detectVideoViaApi(payload) {
     let mimeType = payload.mimeType || "video/mp4";
     let filename = payload.filename || "reel.mp4";
 
-    if (payload.videoBase64) {
+    const fromBuffer = coerceVideoBytes(payload.videoBuffer);
+    if (fromBuffer && fromBuffer.byteLength >= 256) {
+      bytes = fromBuffer;
+    } else if (payload.videoBase64) {
       bytes = base64ToUint8Array(payload.videoBase64);
     } else if (payload.videoUrl) {
       const url = String(payload.videoUrl);
@@ -512,42 +632,73 @@ function detectVideoViaApi(payload) {
         /* keep default filename */
       }
     } else {
-      throw new Error("Missing videoUrl or videoBase64");
+      throw new Error("Missing video payload (need videoBase64 or videoUrl)");
     }
 
     if (!bytes || bytes.byteLength < 256) {
       throw new Error("Video data is empty or too small");
     }
 
-    const form = new FormData();
-    form.append("file", new Blob([bytes], { type: mimeType }), filename);
-
-    const ctrl2 = new AbortController();
-    const tid2 = setTimeout(() => ctrl2.abort(), 180000);
-    let resp;
-    try {
-      resp = await fetch(`${VERITAS_API_BASE}/detect-video`, {
-        method: "POST",
-        body: form,
-        signal: ctrl2.signal,
-      });
-    } finally {
-      clearTimeout(tid2);
-    }
-
-    const text = await resp.text().catch(() => "");
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      throw new Error(`Detect video failed: ${resp.status}`);
-    }
-    if (!resp.ok || !data || data.success !== true) {
+    const detectorBase = await ensureVideoDetectorReady();
+    if (!detectorBase) {
       throw new Error(
-        (data && (data.error || data.detail)) || `Detect video failed: ${resp.status}`
+        "AEGIS/VideoMAE not reachable on :5051. In a browser tab open http://127.0.0.1:5051/health — if that fails, run: npm run install-autostart"
       );
     }
-    return data;
+
+    const endpoints = [
+      `${detectorBase}/detect-video`,
+      "http://127.0.0.1:5051/detect-video",
+      "http://localhost:5051/detect-video",
+      `${VERITAS_API_BASE}/detect-video`,
+    ];
+    // de-dupe while preserving order
+    const seen = new Set();
+    const uniqueEndpoints = endpoints.filter((u) => (seen.has(u) ? false : (seen.add(u), true)));
+
+    let lastErr = null;
+    for (const endpoint of uniqueEndpoints) {
+      const form = new FormData();
+      form.append("file", new Blob([bytes], { type: mimeType }), filename);
+
+      const ctrl2 = new AbortController();
+      const tid2 = setTimeout(() => ctrl2.abort(), 180000);
+      let resp;
+      try {
+        resp = await fetch(endpoint, {
+          method: "POST",
+          body: form,
+          signal: ctrl2.signal,
+        });
+      } catch (e) {
+        clearTimeout(tid2);
+        lastErr = e;
+        continue;
+      } finally {
+        clearTimeout(tid2);
+      }
+
+      const text = await resp.text().catch(() => "");
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        lastErr = new Error(`Detect video failed: ${resp.status}`);
+        continue;
+      }
+      if (!resp.ok || !data || data.success !== true) {
+        const detail =
+          (data && (data.error || (typeof data.detail === "string" ? data.detail : null))) ||
+          `Detect video failed: ${resp.status}`;
+        lastErr = new Error(detail);
+        continue;
+      }
+      return data;
+    }
+
+    throw new Error(
+      String(lastErr?.message || lastErr || "Unable to reach AEGIS/VideoMAE on :5051")
+    );
   };
 
   return run();
@@ -652,10 +803,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (t === "VERITAS_DETECT_VIDEO" && (msg.videoUrl || msg.videoBase64)) {
+  if (t === "VERITAS_DETECT_VIDEO" && (msg.videoUrl || msg.videoBase64 || msg.videoBuffer)) {
     detectVideoViaApi({
       videoUrl: msg.videoUrl,
       videoBase64: msg.videoBase64,
+      videoBuffer: msg.videoBuffer,
       mimeType: msg.mimeType,
       filename: msg.filename,
     })

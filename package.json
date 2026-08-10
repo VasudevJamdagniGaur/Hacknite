@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "concurrently -n backend,web \"npm run dev --prefix backend\" \"npm run dev --prefix web\"",
     "start": "concurrently -n backend,web \"npm run dev --prefix backend\" \"npm run dev --prefix web\"",
-    "install-all": "npm install && npm install --prefix backend && npm install --prefix web"
+    "install-all": "npm install && npm install --prefix backend && npm install --prefix web",
+    "local-agent": "node local-agent/keepalive.js",
+    "install-autostart": "powershell -ExecutionPolicy Bypass -File local-agent/install-autostart.ps1"
   },
   "devDependencies": {
     "concurrently": "^8.0.0"
