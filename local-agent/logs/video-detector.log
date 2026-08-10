@@ -1,0 +1,38 @@
+INFO:     Started server process [3456]
+INFO:     Waiting for application startup.
+INFO:veritas-video-detector:Starting Veritas video detector — loading AEGIS...
+WARNING:aegis_detector:CUDA/GPU unavailable — AEGIS will run on CPU. Inference will be significantly slower. Install CUDA-enabled PyTorch for GPU acceleration.
+INFO:aegis_detector:Loading AEGIS model from C:\CURSOR\Hacknite\video-detector\models\checkpoint_best.pt onto cpu
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/timm/vit_base_patch14_dinov2.lvd142m/resolve/main/model.safetensors "HTTP/1.1 302 Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  [DINOv2] Missing keys: ['fc_norm.weight', 'fc_norm.bias']
+C:\CURSOR\Hacknite\video-detector\aegis_official\motion_branch.py:250: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+C:\CURSOR\Hacknite\video-detector\aegis_official\consistency_branch.py:89: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+INFO:aegis_detector:AEGIS loaded (epoch=7, val_auc=0.9979761051683959) on cpu
+INFO:veritas-video-detector:Loading VideoMAE deepfake detector...
+WARNING:videomae_detector:CUDA unavailable — VideoMAE will run on CPU.
+INFO:videomae_detector:Loading VideoMAE from Vansh180/VideoMae-ffc23-deepfake-detector onto cpu
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/Vansh180/VideoMae-ffc23-deepfake-detector/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/Vansh180/VideoMae-ffc23-deepfake-detector/resolve/main/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Vansh180/VideoMae-ffc23-deepfake-detector/ea26518b527d938d66e568c52bcf1c19a86cf295/preprocessor_config.json "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/Vansh180/VideoMae-ffc23-deepfake-detector/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Vansh180/VideoMae-ffc23-deepfake-detector/ea26518b527d938d66e568c52bcf1c19a86cf295/config.json "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: HEAD https://huggingface.co/Vansh180/VideoMae-ffc23-deepfake-detector/resolve/main/model.safetensors "HTTP/1.1 302 Found"
+INFO:videomae_detector:VideoMAE loaded (id2label={0: 'real', 1: 'fake'}) on cpu
+INFO:veritas-video-detector:Models ready | AEGIS=cpu | VideoMAE=cpu | max_upload_mb=100.0
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5051 (Press CTRL+C to quit)
+INFO:     127.0.0.1:60463 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60474 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60491 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60492 - "POST /detect-image-json HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:60506 - "POST /detect-image-json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58173 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58173 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58175 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55077 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55077 - "POST /detect-image-json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53273 - "GET /health HTTP/1.1" 200 OK

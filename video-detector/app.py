@@ -27,8 +27,8 @@ from aegis_detector import (
     AegisDetector,
     AegisNotLoadedError,
 )
-from fusion import fuse_scores
-from videomae_detector import VideoMAEDetector, VideoMAENotLoadedError
+from image_clip import decode_image_b64, load_image_file, write_images_to_mp4
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("veritas-video-detector")
@@ -40,6 +40,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 ALLOWED_CONTENT_TYPES = {
     "video/mp4",
     "video/quicktime",
@@ -50,19 +51,26 @@ ALLOWED_CONTENT_TYPES = {
     "video/mpeg",
     "application/octet-stream",  # some browsers omit a precise video MIME
 }
+ALLOWED_IMAGE_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/bmp",
+    "application/octet-stream",
+}
 
 # Request / upload limits (bytes). Override with VIDEO_DETECT_MAX_UPLOAD_MB.
 MAX_UPLOAD_BYTES = int(float(os.getenv("VIDEO_DETECT_MAX_UPLOAD_MB", "100")) * 1024 * 1024)
 WRITE_CHUNK_BYTES = 1024 * 1024  # 1 MiB
 
 _aegis: AegisDetector | None = None
-_videomae: VideoMAEDetector | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Load AEGIS + VideoMAE once at process start (not per request)."""
-    global _aegis, _videomae
+    """Load AEGIS once at process start (not per request)."""
+    global _aegis
 
     logger.info("Starting Veritas video detector — loading AEGIS...")
     aegis = AegisDetector(models_dir=MODELS_DIR)
@@ -76,33 +84,22 @@ async def lifespan(_app: FastAPI):
         raise
     _aegis = aegis
 
-    logger.info("Loading VideoMAE deepfake detector...")
-    videomae = VideoMAEDetector(models_dir=MODELS_DIR)
-    try:
-        videomae.load_model()
-    except Exception:
-        logger.exception("Failed to load VideoMAE at startup")
-        raise
-    _videomae = videomae
-
     logger.info(
-        "Models ready | AEGIS=%s | VideoMAE=%s | max_upload_mb=%.1f",
+        "Models ready | AEGIS=%s | max_upload_mb=%.1f",
         _aegis.checkpoint_meta.get("device"),
-        _videomae.model_meta.get("device"),
         MAX_UPLOAD_BYTES / (1024 * 1024),
     )
     yield
     _aegis = None
-    _videomae = None
 
 
 app = FastAPI(
     title="Veritas Video Detector",
     description=(
-        "Probabilistic AEGIS + VideoMAE video authenticity signals. "
+        "Probabilistic AEGIS video authenticity signals. "
         "Outputs are confidence-weighted estimates — not definitive labels."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -183,15 +180,6 @@ def get_aegis() -> AegisDetector:
     return _aegis
 
 
-def get_videomae() -> VideoMAEDetector:
-    if _videomae is None or not _videomae.is_ready():
-        raise HTTPException(
-            status_code=503,
-            detail="VideoMAE model is not loaded. Service startup may have failed.",
-        )
-    return _videomae
-
-
 def _validate_upload_metadata(file: UploadFile) -> str:
     if not file.filename or not file.filename.strip():
         raise HTTPException(status_code=400, detail="Missing filename.")
@@ -265,30 +253,51 @@ async def _save_upload_securely(file: UploadFile, suffix: str) -> Path:
     return dest
 
 
-def _build_success_response(
-    aegis_result: dict[str, Any],
-    videomae_result: dict[str, Any],
-    fused: dict[str, Any],
-) -> dict[str, Any]:
+def _confidence_from_aegis(ai_p: float) -> str:
+    """Simple confidence band from how far AEGIS is from 0.5."""
+    dist = abs(float(ai_p) - 0.5)
+    if dist >= 0.35:
+        return "high"
+    if dist >= 0.20:
+        return "medium"
+    return "low"
+
+
+def _build_success_response(aegis_result: dict[str, Any]) -> dict[str, Any]:
     """
-    Probabilistic response only — never a definitive authenticity claim.
+    Probabilistic AEGIS-only response — never a definitive authenticity claim.
     """
+    ai_p = float(aegis_result["ai_generated_probability"])
+    real_p = float(aegis_result["real_probability"])
     return {
         "success": True,
-        "ai_probability": float(fused["ai_probability"]),
-        "real_probability": float(fused["real_probability"]),
-        "confidence": fused["confidence"],
+        "ai_probability": ai_p,
+        "real_probability": real_p,
+        "confidence": _confidence_from_aegis(ai_p),
         "detectors": {
             "aegis": {
-                "ai_generated_probability": float(aegis_result["ai_generated_probability"]),
-                "real_probability": float(aegis_result["real_probability"]),
-            },
-            "videomae": {
-                "deepfake_probability": float(videomae_result["deepfake_probability"]),
-                "real_probability": float(videomae_result["real_probability"]),
+                "ai_generated_probability": ai_p,
+                "real_probability": real_p,
             },
         },
     }
+
+
+def _run_aegis_detection(video_path: Path) -> dict[str, Any]:
+    try:
+        aegis_result = get_aegis().predict(video_path)
+    except AegisNotLoadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AegisCUDAUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _build_success_response(aegis_result)
+
+
+class DetectImageJsonBody(BaseModel):
+    """Screenshot / still-frame payload from the Chrome extension."""
+
+    imageBase64: str | None = None
+    imagesBase64: list[str] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -296,6 +305,8 @@ def health() -> dict[str, str]:
     return {
         "status": "ok",
         "service": "veritas-video-detector",
+        "model": "aegis",
+        "endpoints": "/detect-video,/detect-image,/detect-image-json",
     }
 
 
@@ -304,28 +315,14 @@ async def detect_video(file: UploadFile = File(...)) -> dict[str, Any]:
     """
     Multipart field name: ``file``
 
-    Runs AEGIS + VideoMAE, fuses probabilistic scores, then deletes the temp file.
+    Runs AEGIS and returns its AI-generated probability.
     Does not return definitive statements such as \"this video is definitely AI\".
     """
     suffix = _validate_upload_metadata(file)
     dest = await _save_upload_securely(file, suffix)
 
     try:
-        try:
-            aegis_result = get_aegis().predict(dest)
-        except AegisNotLoadedError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except AegisCUDAUnavailableError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-        try:
-            videomae_result = get_videomae().predict(dest)
-        except VideoMAENotLoadedError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-        fused = fuse_scores(aegis_result, videomae_result)
-        return _build_success_response(aegis_result, videomae_result, fused)
-
+        return _run_aegis_detection(dest)
     except HTTPException:
         raise
     except ValueError as exc:
@@ -341,3 +338,90 @@ async def detect_video(file: UploadFile = File(...)) -> dict[str, Any]:
             dest.unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("Failed to delete temp video %s: %s", dest, exc)
+
+
+@app.post("/detect-image")
+async def detect_image(file: UploadFile = File(...)) -> dict[str, Any]:
+    """
+    Accept a screenshot (multipart ``file``), build a short MP4 of repeated
+    frames, then run AEGIS.
+
+    For JSON base64 from the extension, use ``POST /detect-image-json``.
+    """
+    safe_name = Path(file.filename or "shot.jpg").name
+    suffix = Path(safe_name).suffix.lower() or ".jpg"
+    if suffix not in ALLOWED_IMAGE_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported image type '{suffix}'. Allowed: {sorted(ALLOWED_IMAGE_SUFFIXES)}",
+        )
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type and content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported Content-Type '{content_type}'. Expected an image upload.",
+        )
+
+    img_path = await _save_upload_securely(file, suffix)
+    clip_path = UPLOADS_DIR / f"{uuid.uuid4().hex}.mp4"
+    try:
+        image = load_image_file(img_path)
+        write_images_to_mp4([image], clip_path, num_frames=16, fps=8.0)
+        result = _run_aegis_detection(clip_path)
+        result["input"] = "screenshot"
+        return result
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("detect-image failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Detection failed while analyzing the screenshot: {exc}",
+        ) from exc
+    finally:
+        for p in (img_path, clip_path):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Failed to delete temp file %s: %s", p, exc)
+
+
+@app.post("/detect-image-json")
+async def detect_image_json(body: DetectImageJsonBody) -> dict[str, Any]:
+    """JSON screenshot path used by the Chrome extension service worker."""
+    raw_list = [x for x in (body.imagesBase64 or []) if x]
+    if body.imageBase64:
+        raw_list = [body.imageBase64, *raw_list]
+    if not raw_list:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide imageBase64 or imagesBase64 with at least one screenshot.",
+        )
+    if len(raw_list) > 16:
+        raw_list = raw_list[:16]
+
+    clip_path = UPLOADS_DIR / f"{uuid.uuid4().hex}.mp4"
+    try:
+        images = [decode_image_b64(x) for x in raw_list]
+        write_images_to_mp4(images, clip_path, num_frames=16, fps=8.0)
+        result = _run_aegis_detection(clip_path)
+        result["input"] = "screenshot" if len(images) == 1 else "screenshots"
+        result["frames_used"] = len(images)
+        return result
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("detect-image-json failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Detection failed while analyzing the screenshot: {exc}",
+        ) from exc
+    finally:
+        try:
+            clip_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to delete temp clip %s: %s", clip_path, exc)

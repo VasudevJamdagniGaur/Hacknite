@@ -705,6 +705,89 @@ function detectVideoViaApi(payload) {
 }
 
 /**
+ * Screenshot → AEGIS + VideoMAE via /detect-image-json
+ * @param {{ imageBase64?: string, imagesBase64?: string[] }} payload
+ */
+function detectImageViaApi(payload) {
+  const run = async () => {
+    const images = [];
+    if (Array.isArray(payload.imagesBase64)) {
+      for (const x of payload.imagesBase64) {
+        const s = String(x || "").trim();
+        if (s) images.push(s);
+      }
+    }
+    if (payload.imageBase64) {
+      const s = String(payload.imageBase64).trim();
+      if (s) images.unshift(s);
+    }
+    if (!images.length) throw new Error("Missing screenshot for AEGIS/VideoMAE");
+
+    const detectorBase = await ensureVideoDetectorReady();
+    if (!detectorBase) {
+      throw new Error(
+        "AEGIS/VideoMAE not reachable on :5051. Open http://127.0.0.1:5051/health — if that fails, run: npm run install-autostart"
+      );
+    }
+
+    const body = images.length === 1
+      ? { imageBase64: images[0] }
+      : { imagesBase64: images.slice(0, 16) };
+
+    const endpoints = [
+      `${detectorBase}/detect-image-json`,
+      "http://127.0.0.1:5051/detect-image-json",
+      "http://localhost:5051/detect-image-json",
+    ];
+    const seen = new Set();
+    const unique = endpoints.filter((u) => (seen.has(u) ? false : (seen.add(u), true)));
+
+    let lastErr = null;
+    for (const endpoint of unique) {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 180000);
+      let resp;
+      try {
+        resp = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        });
+      } catch (e) {
+        clearTimeout(tid);
+        lastErr = e;
+        continue;
+      } finally {
+        clearTimeout(tid);
+      }
+
+      const text = await resp.text().catch(() => "");
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        lastErr = new Error(`Detect image failed: ${resp.status}`);
+        continue;
+      }
+      if (!resp.ok || !data || data.success !== true) {
+        lastErr = new Error(
+          (data && (data.error || data.detail)) || `Detect image failed: ${resp.status}`
+        );
+        continue;
+      }
+      return data;
+    }
+
+    throw new Error(
+      String(lastErr?.message || lastErr || "Unable to reach AEGIS/VideoMAE screenshot API")
+    );
+  };
+
+  return run();
+}
+
+/**
  * Capture the visible tab as JPEG (used when Instagram/CDN video frames
  * cannot be read via canvas due to CORS taint).
  * @param {number|undefined} windowId
@@ -798,6 +881,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (t === "VERITAS_FACT_CHECK" && typeof msg.text === "string" && msg.text.length >= 40) {
     factCheckViaApi({ text: msg.text, url: msg.url, title: msg.title })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (t === "VERITAS_DETECT_IMAGE" && (msg.imageBase64 || (Array.isArray(msg.imagesBase64) && msg.imagesBase64.length))) {
+    detectImageViaApi({
+      imageBase64: msg.imageBase64,
+      imagesBase64: msg.imagesBase64,
+    })
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;

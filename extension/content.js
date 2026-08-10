@@ -2095,14 +2095,14 @@
   }
 
   function renderReelVideoDetectResult(panel, data) {
-    const aiPct = Math.round(Number(data.ai_probability) * 100);
-    const realPct = Math.round(Number(data.real_probability) * 100);
+    const aegisRaw = Number(data.detectors?.aegis?.ai_generated_probability);
+    const aiProb = Number.isFinite(aegisRaw) ? aegisRaw : Number(data.ai_probability);
+    const aiPct = Math.round(aiProb * 100);
+    const realPct = Math.round((1 - aiProb) * 100);
     const conf = formatConfidenceLabel(data.confidence) || "Low";
-    const aegisPct = Math.round(Number(data.detectors?.aegis?.ai_generated_probability) * 100);
-    const maePct = Math.round(Number(data.detectors?.videomae?.deepfake_probability) * 100);
-    const leansAi = Number(data.ai_probability) >= 0.5;
+    const leansAi = aiProb >= 0.5;
 
-    if (!Number.isFinite(aiPct)) {
+    if (!Number.isFinite(realPct)) {
       throw new Error("Unable to analyze this video");
     }
 
@@ -2114,32 +2114,29 @@
     head.className = "veritas-check-ai-head";
     const title = document.createElement("span");
     title.className = "veritas-check-ai-title";
-    title.textContent = "Check AI";
+    title.textContent = "AEGIS";
     const ver = document.createElement("span");
     ver.className = `veritas-check-ai-verdict ${
       leansAi ? "veritas-check-ai-verdict--ai" : "veritas-check-ai-verdict--real"
     }`;
-    ver.textContent = String(aiPct);
+    ver.textContent = String(realPct);
     head.appendChild(title);
     head.appendChild(ver);
 
     const meter = document.createElement("div");
     meter.className = "veritas-check-ai-meter";
-    meter.innerHTML = `<span>AI score (0=Real · 100=AI)</span><strong>${aiPct}</strong>`;
+    meter.innerHTML = `<span>Real score (0=AI · 100=Real)</span><strong>${realPct}</strong>`;
 
     const barWrap = document.createElement("div");
     barWrap.className = "veritas-check-ai-bar";
     const bar = document.createElement("span");
-    bar.style.width = `${clamp(aiPct, 0, 100)}%`;
+    bar.style.width = `${clamp(realPct, 0, 100)}%`;
     barWrap.appendChild(bar);
 
     const expl = document.createElement("p");
     expl.className = "veritas-check-ai-expl";
     expl.textContent =
-      `AEGIS: ${Number.isFinite(aegisPct) ? aegisPct : "—"} · ` +
-      `VideoMAE: ${Number.isFinite(maePct) ? maePct : "—"} · ` +
-      `Real: ${Number.isFinite(realPct) ? realPct : "—"} · ` +
-      `Confidence: ${conf}`;
+      `AI: ${Number.isFinite(aiPct) ? aiPct : "—"} · Confidence: ${conf}`;
 
     card.appendChild(head);
     card.appendChild(meter);
@@ -2172,7 +2169,7 @@
         host.getAttribute("data-veritas-reel-checkai-host") === "1" ||
         (typeof isInstagramReelSurface === "function" && isInstagram && isInstagramReelSurface());
 
-      loadingCard.textContent = onReel ? "Capturing reel frames..." : "Analyzing image…";
+      loadingCard.textContent = onReel ? "Analysing using AEGIS" : "Analyzing image…";
       panel.appendChild(loadingCard);
       btn.disabled = true;
 
@@ -2186,22 +2183,36 @@
             throw new Error("No reel video found");
           }
 
-          loadingCard.textContent = "Building clip for AEGIS + VideoMAE...";
-          let payload = await prepareReelSnapDetectPayload(video, { hideEls: [host] });
+          loadingCard.textContent = "Analysing using AEGIS";
+          let payload = await prepareReelScreenshotDetectPayload(video, { hideEls: [host] });
           if (!payload) {
-            payload = await prepareReelVideoPayload(video);
-          }
-          if (!payload) {
-            throw new Error(
-              "Could not capture reel frames for AEGIS/VideoMAE. Try another reel or wait for playback."
-            );
+            // Fallback: older video-clip path if screenshot capture fails.
+            loadingCard.textContent = "Analysing using AEGIS";
+            payload = await prepareReelSnapDetectPayload(video, { hideEls: [host] });
+            if (!payload) payload = await prepareReelVideoPayload(video);
+            if (!payload) {
+              throw new Error(
+                "Could not capture a screenshot of this reel. Try another reel or wait for playback."
+              );
+            }
+            loadingCard.textContent = "Analysing using AEGIS";
+            const data = await requestDetectVideo(payload);
+            if (panel.dataset.veritasCheckAiDismissed === "1") return;
+            if (!data || data.success !== true) {
+              throw new Error(data?.error || "AEGIS detection failed");
+            }
+            renderReelVideoDetectResult(panel, data);
+            setCheckAiButtonAfterResult(btn, {
+              verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
+            });
+            return;
           }
 
-          loadingCard.textContent = "Running AEGIS + VideoMAE...";
-          const data = await requestDetectVideo(payload);
+          loadingCard.textContent = "Analysing using AEGIS";
+          const data = await requestDetectImage(payload);
           if (panel.dataset.veritasCheckAiDismissed === "1") return;
           if (!data || data.success !== true) {
-            throw new Error(data?.error || "AEGIS/VideoMAE detection failed");
+            throw new Error(data?.error || "AEGIS detection failed");
           }
 
           renderReelVideoDetectResult(panel, data);
@@ -2245,15 +2256,24 @@
 
   /** Pin the portal to the reel video’s top-right (viewport coords). */
   function positionReelCheckAiHost(hostEl, video) {
-    if (!hostEl || !video || !video.isConnected) return;
+    if (!hostEl || !video || !video.isConnected) return false;
     const r = video.getBoundingClientRect();
-    if (r.width < 40 || r.height < 40) return;
+    if (r.width < 40 || r.height < 40) {
+      hostEl.style.visibility = "hidden";
+      return false;
+    }
+    const visibleH = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+    const visibleW = Math.min(r.right, window.innerWidth) - Math.max(r.left, 0);
+    if (visibleH < 80 || visibleW < 80) {
+      hostEl.style.visibility = "hidden";
+      return false;
+    }
+    hostEl.style.visibility = "visible";
     const pad = 10;
     const width = Math.min(340, Math.max(140, r.width - pad * 2));
-    let top = r.top + pad;
-    let left = r.right - width - pad;
-    top = Math.max(8, Math.min(top, window.innerHeight - 48));
-    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+    // Follow the reel (including off-screen) — do not clamp to the viewport.
+    const top = r.top + pad;
+    const left = r.right - width - pad;
     hostEl.style.position = "fixed";
     hostEl.style.top = `${Math.round(top)}px`;
     hostEl.style.left = `${Math.round(left)}px`;
@@ -2261,19 +2281,31 @@
     hostEl.style.bottom = "auto";
     hostEl.style.width = `${Math.round(width)}px`;
     hostEl.style.zIndex = "2147483646";
+    return true;
   }
 
+  /** Prefer the reel with the largest on-screen intersection (IG often keeps multiple <video>s). */
   function findPrimaryInstagramReelVideo() {
     const videos = Array.from(document.querySelectorAll("video"));
     let best = null;
-    let bestArea = 0;
+    let bestScore = 0;
+    const vh = window.innerHeight || 1;
+    const vw = window.innerWidth || 1;
     for (const v of videos) {
       const r = v.getBoundingClientRect();
-      const area = r.width * r.height;
-      if (area < 120 * 160) continue;
-      if (r.bottom < -40 || r.top > window.innerHeight + 40) continue;
-      if (area > bestArea) {
-        bestArea = area;
+      if (r.width < 80 || r.height < 120) continue;
+      const visW = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+      const visH = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      const visibleArea = visW * visH;
+      if (visibleArea < 80 * 120) continue;
+      // Prefer centered / more visible reels.
+      const cx = (r.left + r.right) / 2;
+      const cy = (r.top + r.bottom) / 2;
+      const centerDist =
+        Math.abs(cx - vw / 2) / vw + Math.abs(cy - vh / 2) / vh;
+      const score = visibleArea * (1.35 - Math.min(1, centerDist));
+      if (score > bestScore) {
+        bestScore = score;
         best = v;
       }
     }
@@ -2510,6 +2542,29 @@
   }
 
   /**
+   * Check AI on Reels: capture on-screen screenshot(s) → AEGIS + VideoMAE.
+   * Server turns stills into a short clip (models expect video tensors).
+   */
+  async function prepareReelScreenshotDetectPayload(video, opts) {
+    const hideEls = opts?.hideEls || [];
+    try {
+      // A few snaps while the reel plays give VideoMAE more signal than one freeze-frame.
+      const snaps = await captureReelSnapsForDetect(video, hideEls, 8);
+      if (snaps.length >= 2) {
+        return { imagesBase64: snaps };
+      }
+      if (snaps.length === 1) {
+        return { imageBase64: snaps[0] };
+      }
+      const one = await captureSingleReelSnap(video, hideEls);
+      if (!one) return null;
+      return { imageBase64: one };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Check AI on Reels: snap the on-screen reel → short clip → AEGIS + VideoMAE.
    */
   async function prepareReelSnapDetectPayload(video, opts) {
@@ -2548,6 +2603,23 @@
     } catch {
       return null;
     }
+  }
+
+  async function requestDetectImage(payload) {
+    const bg = await sendMessageToExtension({ type: "VERITAS_DETECT_IMAGE", ...payload });
+    if (bg) {
+      if (bg.ok === true && bg.data && bg.data.success === true) return bg.data;
+      const err = formatExtensionMessagingError(bg?.error || "Unable to analyze this screenshot");
+      if (/failed to fetch|ECONNREFUSED|could not reach|network/i.test(err)) {
+        throw new Error(
+          "Cannot reach AEGIS/VideoMAE. Open http://127.0.0.1:5051/health in Chrome — if it fails, run: npm run install-autostart"
+        );
+      }
+      throw new Error(err);
+    }
+    throw new Error(
+      "Extension background unreachable. Reload Veritas on chrome://extensions, then refresh this tab."
+    );
   }
 
   async function requestDetectVideo(payload) {
@@ -2590,19 +2662,17 @@
       return;
     }
 
-    document.querySelectorAll("[data-veritas-reel-checkai-host]").forEach((hostEl) => {
-      const token = hostEl.getAttribute("data-veritas-for-video");
-      const still = token && document.querySelector(`video[data-veritas-reel-id="${token}"]`);
-      if (!still) hostEl.remove();
-    });
-
     const video = findPrimaryInstagramReelVideo();
-    if (!video) return;
+    if (!video) {
+      // Mid-swipe gap: hide existing portal but keep it for a moment.
+      document.querySelectorAll("[data-veritas-reel-checkai-host]").forEach((hostEl) => {
+        hostEl.style.visibility = "hidden";
+      });
+      return;
+    }
 
     const token = ensureReelVideoToken(video);
-    let hostEl = document.querySelector(
-      `[data-veritas-reel-checkai-host][data-veritas-for-video="${token}"]`
-    );
+    let hostEl = document.querySelector("[data-veritas-reel-checkai-host]");
 
     /* Migrate old absolute-in-player mounts (under IG video tree) → body portal. */
     if (hostEl && hostEl.parentElement !== document.body) {
@@ -2610,20 +2680,33 @@
       hostEl = null;
     }
 
+    const prevToken = hostEl?.getAttribute("data-veritas-for-video");
+    const reelChanged = !hostEl || prevToken !== token || hostEl._veritasCaptureRoot !== video;
+
     if (!hostEl) {
-      document.querySelectorAll("[data-veritas-reel-checkai-host]").forEach((n) => n.remove());
       hostEl = document.createElement("div");
       hostEl.setAttribute("data-veritas-reel-checkai-host", "1");
-      hostEl.setAttribute("data-veritas-for-video", token);
       hostEl.className = "veritas-ig-reel-overlay";
       document.body.appendChild(hostEl);
       attachCheckAiToHost(hostEl, video);
+    } else if (reelChanged) {
+      // New reel: clear previous score, reset button, rebind capture root.
+      hostEl.setAttribute("data-veritas-for-video", token);
+      const panel = hostEl.querySelector(".veritas-check-ai-panel");
+      if (panel) {
+        panel.textContent = "";
+        panel.dataset.veritasCheckAiDismissed = "1";
+      }
+      const btn = hostEl.querySelector(".veritas-check-ai-btn");
+      if (btn) resetCheckAiButton(btn);
+      if (!hostEl.querySelector(".veritas-check-ai-btn")) {
+        attachCheckAiToHost(hostEl, video);
+      }
     }
 
-    /* Remove legacy Veritas AI prompt badge if any leftover. */
-    hostEl.querySelectorAll(".veritas-video-ai-badge").forEach((n) => n.remove());
-
+    hostEl.setAttribute("data-veritas-for-video", token);
     hostEl._veritasCaptureRoot = video;
+    hostEl.querySelectorAll(".veritas-video-ai-badge").forEach((n) => n.remove());
     positionReelCheckAiHost(hostEl, video);
   }
 
@@ -3352,21 +3435,25 @@
       scanInstagram._t = window.setTimeout(runIg, 500);
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
-    /* Keep the fixed Check AI portal glued to the reel while IG scrolls/resizes. */
+    /* IG Reels often animate with transforms (no window scroll). Poll + listen widely. */
     let reelPosRaf = 0;
-    const repositionReelPortal = () => {
+    const tickReelPortal = () => {
       if (reelPosRaf) return;
       reelPosRaf = requestAnimationFrame(() => {
         reelPosRaf = 0;
-        if (!isInstagramReelSurface()) return;
-        const hostEl = document.querySelector("[data-veritas-reel-checkai-host]");
-        const video = hostEl?._veritasCaptureRoot || findPrimaryInstagramReelVideo();
-        if (hostEl && video) positionReelCheckAiHost(hostEl, video);
-        else scanInstagramReelCheckAi();
+        scanInstagramReelCheckAi();
       });
     };
-    window.addEventListener("scroll", repositionReelPortal, true);
-    window.addEventListener("resize", repositionReelPortal);
+    window.addEventListener("scroll", tickReelPortal, true);
+    window.addEventListener("resize", tickReelPortal);
+    window.addEventListener("wheel", tickReelPortal, { passive: true, capture: true });
+    window.addEventListener("touchstart", tickReelPortal, { passive: true, capture: true });
+    window.addEventListener("touchmove", tickReelPortal, { passive: true, capture: true });
+    window.addEventListener("touchend", tickReelPortal, { passive: true, capture: true });
+    // Fallback: IG virtualized feed updates without scroll events.
+    window.setInterval(() => {
+      if (isInstagramReelSurface()) tickReelPortal();
+    }, 400);
     return;
   }
 
