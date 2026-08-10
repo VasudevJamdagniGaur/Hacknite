@@ -134,96 +134,50 @@ async function analyzeText({ apiKey, model, text }) {
   }
 }
 
-/** Random AI probability for Check AI: integer percent on the standard 0–100 field, drawn uniformly from 1–10 inclusive. */
-function rollAiProbability1to10() {
-  return Math.floor(Math.random() * 10) + 1;
-}
-
-function mockCheckAiVision(imageBase64Length) {
-  const aiProbability = rollAiProbability1to10();
-  const verdict = aiProbability >= 6 ? "AI-generated" : "Real";
-  const variants = [
-    "Mock mode (no OPENAI_API_KEY): lighting and edge detail vary with each run.",
-    "Mock mode: treat this as a demo score; configure the API key for live vision text.",
-    "Mock mode: the meter uses a random 1–10% readout per click in offline mode.",
-  ];
-  const explanation = `${variants[Math.floor(Math.random() * variants.length)]} Score: ${aiProbability}%.`;
-  void imageBase64Length;
-  return { aiProbability, verdict, explanation };
-}
-
 /**
- * Fresh prose per request; score is chosen server-side (1–10) so the meter varies every time.
+ * Check AI vision via local AEGIS detector (:5051). Never invents random scores.
  */
-async function openAiVisionExplainForScore({ apiKey, model, imageBase64, score1to10 }) {
-  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-  const userText = [
-    `Request id: ${nonce}`,
-    "",
-    `The UI will show an "AI probability" of ${score1to10}% on the usual 0–100 scale (this run picks a random 1–10% value server-side).`,
-    "Write 2–4 sentences in plain English:",
-    "- Describe what is actually visible in the image (setting, people, objects, colors, lighting, text if any).",
-    "- Comment on cues relevant to real photos vs AI-generated images (texture, hands, shadows, coherence).",
-    "Be specific to THIS image only — do not describe a beach, mountains, or stock scenes unless they appear.",
-    "Vary your opening; avoid repeating the same template every time.",
-    "Output prose only — no JSON, no bullet list, no percentage in the first word.",
-  ].join("\n");
+async function checkAiViaAegisDetector(imageBase64) {
+  const { getEnv } = require("./env");
+  const env = getEnv();
+  const base = String(env.VIDEO_DETECTOR_URL || "http://127.0.0.1:5051").replace(/\/$/, "");
+  const raw = String(imageBase64 || "").trim();
+  const payloadImage = raw.startsWith("data:") ? raw : `data:${mimeFromBase64(raw)};base64,${raw}`;
 
   const resp = await axios.post(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a careful vision analyst for Veritas. Follow the user instructions. Be concise and concrete.",
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: userText },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeFromBase64(imageBase64)};base64,${imageBase64}`,
-              },
-            },
-          ],
-        },
-      ],
-      temperature: 0.88,
-      max_tokens: 380,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      timeout: 90000,
-    }
+    `${base}/detect-image-json`,
+    { imageBase64: payloadImage },
+    { timeout: 180000, validateStatus: () => true }
   );
+  const data = resp.data;
+  if (resp.status >= 400 || !data || data.success !== true) {
+    const detail =
+      (data && (data.error || data.detail || data.message)) ||
+      `AEGIS HTTP ${resp.status}`;
+    throw new Error(String(detail));
+  }
 
-  const text = String(resp.data?.choices?.[0]?.message?.content ?? "").trim();
-  if (!text) throw new Error("Empty explanation from model");
-  return text;
+  const ai = Number(data.ai_probability);
+  const aiPct = Math.round((Number.isFinite(ai) ? ai : 0) * 100);
+  const real = Number(data.real_probability);
+  const realPct = Number.isFinite(real) ? Math.round(real * 100) : Math.max(0, 100 - aiPct);
+  const conf = String(data.confidence || "low");
+
+  return {
+    aiProbability: aiPct,
+    realProbability: realPct,
+    verdict: ai >= 0.5 ? "AI-generated" : "Real",
+    explanation: `AEGIS · AI ${aiPct}% · Real ${realPct}% · Confidence: ${conf}`,
+    source: "aegis",
+    confidence: data.confidence,
+    detectors: data.detectors,
+  };
 }
 
 async function checkAiVision({ apiKey, model, imageBase64 }) {
-  if (!apiKey) return mockCheckAiVision(String(imageBase64 || "").length);
-  const roll = rollAiProbability1to10();
-  try {
-    const explanation = await openAiVisionExplainForScore({
-      apiKey,
-      model,
-      imageBase64,
-      score1to10: roll,
-    });
-    const verdict = roll >= 6 ? "AI-generated" : "Real";
-    return { aiProbability: roll, verdict, explanation };
-  } catch {
-    return mockCheckAiVision(String(imageBase64 || "").length);
-  }
+  void apiKey;
+  void model;
+  return checkAiViaAegisDetector(imageBase64);
 }
 
 function mockAmazonReviewsTrust(previewLen) {

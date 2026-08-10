@@ -124,9 +124,20 @@ function pinnedAccountScore(handle) {
     .trim()
     .replace(/^@+/, "")
     .toLowerCase();
-  return Object.prototype.hasOwnProperty.call(PINNED_ACCOUNT_SCORES, k)
-    ? PINNED_ACCOUNT_SCORES[k]
-    : null;
+  if (!k) return null;
+  if (Object.prototype.hasOwnProperty.call(PINNED_ACCOUNT_SCORES, k)) {
+    return PINNED_ACCOUNT_SCORES[k];
+  }
+  const bare = k.replace(/^(li|x|reddit):/, "");
+  // Any Instagram / X / LinkedIn handle whose name contains "rajan" → 90.
+  if (bare.includes("rajan")) return 90;
+  // "sparsh" in username → platform-specific scores.
+  if (bare.includes("sparsh")) {
+    if (k.startsWith("li:")) return 93;
+    if (k.startsWith("x:")) return 86;
+    return 89; // Instagram (unprefixed handles)
+  }
+  return null;
 }
 
 /**
@@ -728,8 +739,8 @@ function detectVideoViaApi(payload) {
 }
 
 /**
- * Screenshot → AEGIS + VideoMAE via /detect-image-json
- * @param {{ imageBase64?: string, imagesBase64?: string[] }} payload
+ * Screenshot → AEGIS via /detect-image-json
+ * @param {{ imageBase64?: string, imagesBase64?: string[], imageUrl?: string }} payload
  */
 function detectImageViaApi(payload) {
   const run = async () => {
@@ -744,12 +755,26 @@ function detectImageViaApi(payload) {
       const s = String(payload.imageBase64).trim();
       if (s) images.unshift(s);
     }
-    if (!images.length) throw new Error("Missing screenshot for AEGIS/VideoMAE");
+    if (!images.length && payload.imageUrl) {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 25000);
+      const r = await fetch(String(payload.imageUrl), {
+        mode: "cors",
+        credentials: "omit",
+        signal: ctrl.signal,
+      });
+      clearTimeout(tid);
+      if (!r.ok) throw new Error(`Image fetch failed: ${r.status}`);
+      const blob = await r.blob();
+      const b64 = await blobToDownscaledJpegBase64(blob);
+      if (b64) images.push(`data:image/jpeg;base64,${b64}`);
+    }
+    if (!images.length) throw new Error("Missing screenshot for AEGIS");
 
     const detectorBase = await ensureVideoDetectorReady();
     if (!detectorBase) {
       throw new Error(
-        "AEGIS/VideoMAE not reachable on :5051. Open http://127.0.0.1:5051/health — if that fails, run: npm run install-autostart"
+        "AEGIS not reachable on :5051. Open http://127.0.0.1:5051/health — if it fails, run: npm run install-autostart"
       );
     }
 
@@ -785,10 +810,10 @@ function detectImageViaApi(payload) {
         clearTimeout(tid);
       }
 
-      const text = await resp.text().catch(() => "");
+      const textBody = await resp.text().catch(() => "");
       let data = null;
       try {
-        data = text ? JSON.parse(text) : null;
+        data = textBody ? JSON.parse(textBody) : null;
       } catch {
         lastErr = new Error(`Detect image failed: ${resp.status}`);
         continue;
@@ -803,11 +828,38 @@ function detectImageViaApi(payload) {
     }
 
     throw new Error(
-      String(lastErr?.message || lastErr || "Unable to reach AEGIS/VideoMAE screenshot API")
+      String(lastErr?.message || lastErr || "Unable to reach AEGIS screenshot API")
     );
   };
 
   return run();
+}
+
+/**
+ * Legacy Check AI message → AEGIS (never invent random scores).
+ */
+function checkAiViaAegis(payload) {
+  return detectImageViaApi(payload).then((data) => {
+    const ai = Number(data.ai_probability);
+    const aiPct = Math.round((Number.isFinite(ai) ? ai : 0) * 100);
+    const real = Number(data.real_probability);
+    const realPct = Number.isFinite(real)
+      ? Math.round(real * 100)
+      : Math.max(0, 100 - aiPct);
+    const conf = String(data.confidence || "low");
+    return {
+      success: true,
+      aiProbability: aiPct,
+      realProbability: realPct,
+      verdict: ai >= 0.5 ? "AI-generated" : "Real",
+      explanation: `AEGIS · AI ${aiPct}% · Real ${realPct}% · Confidence: ${conf}`,
+      source: "aegis",
+      confidence: data.confidence,
+      detectors: data.detectors,
+      ai_probability: data.ai_probability,
+      real_probability: data.real_probability,
+    };
+  });
 }
 
 /**
@@ -861,9 +913,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (t === "VERITAS_CHECK_AI" && (msg.imageBase64 || msg.imageUrl)) {
-    checkAiViaApi({
+  if (t === "VERITAS_CHECK_AI" && (msg.imageBase64 || msg.imageUrl || (Array.isArray(msg.imagesBase64) && msg.imagesBase64.length))) {
+    // Always AEGIS — never the old random OpenAI mock path.
+    checkAiViaAegis({
       imageBase64: msg.imageBase64,
+      imagesBase64: msg.imagesBase64,
       imageUrl: msg.imageUrl,
     })
       .then((data) => sendResponse({ ok: true, data }))
@@ -909,10 +963,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (t === "VERITAS_DETECT_IMAGE" && (msg.imageBase64 || (Array.isArray(msg.imagesBase64) && msg.imagesBase64.length))) {
+  if (
+    t === "VERITAS_DETECT_IMAGE" &&
+    (msg.imageBase64 || msg.imageUrl || (Array.isArray(msg.imagesBase64) && msg.imagesBase64.length))
+  ) {
     detectImageViaApi({
       imageBase64: msg.imageBase64,
       imagesBase64: msg.imagesBase64,
+      imageUrl: msg.imageUrl,
     })
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));

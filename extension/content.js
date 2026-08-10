@@ -1265,11 +1265,35 @@
       .toLowerCase();
   }
 
-  function pinnedAccountScore(scoreKey) {
+  function displayHintFromAnchor(anchor) {
+    if (!anchor) return "";
+    try {
+      return String(anchor.textContent || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160);
+    } catch {
+      return "";
+    }
+  }
+
+  /** Exact pins first; substring name rules for demo accounts. */
+  function pinnedAccountScore(scoreKey, displayHint) {
     const k = normalizeScoreHandle(scoreKey);
-    return Object.prototype.hasOwnProperty.call(PINNED_ACCOUNT_SCORES, k)
-      ? PINNED_ACCOUNT_SCORES[k]
-      : null;
+    if (!k) return null;
+    if (Object.prototype.hasOwnProperty.call(PINNED_ACCOUNT_SCORES, k)) {
+      return PINNED_ACCOUNT_SCORES[k];
+    }
+    const bare = k.replace(/^(li|x|reddit):/, "");
+    const hint = String(displayHint || "").toLowerCase();
+    if (bare.includes("rajan") || hint.includes("rajan")) return 90;
+
+    if (bare.includes("sparsh") || hint.includes("sparsh")) {
+      if (k.startsWith("li:") || isLinkedIn) return 93;
+      if (k.startsWith("x:") || isX) return 86;
+      return 89; // Instagram
+    }
+    return null;
   }
 
   /** Same algorithm as backend `mockRealness` — used when API is blocked (HTTPS → HTTP localhost). */
@@ -1283,7 +1307,7 @@
   }
 
   function resolveDisplayedAccountScore(scoreKey, rawScore, anchor) {
-    const pinned = pinnedAccountScore(scoreKey);
+    const pinned = pinnedAccountScore(scoreKey, displayHintFromAnchor(anchor));
     if (pinned != null) return { score: pinned, boosted: false, pinned: true };
     return { ...applyVerifiedAccountBonus(rawScore, anchor), pinned: false };
   }
@@ -1853,7 +1877,7 @@
 
       // On profile pages, skip extra links for the owner (header already pinned).
       if (profileHandle && handle.toLowerCase() === profileHandle.toLowerCase()) {
-        a.setAttribute(IG_TAG, "1");
+      a.setAttribute(IG_TAG, "1");
         continue;
       }
 
@@ -2661,18 +2685,12 @@
   }
 
   function renderCheckAiResult(panel, { aiProbability, verdict, explanation }) {
-    const raw = Math.round(Number(aiProbability));
-    /** Check AI returns a random percent 1–10 on the usual 0–100 scale; other callers may send any 0–100 value. */
-    let displayPct;
-    let barWidth;
-    if (raw >= 1 && raw <= 10) {
-      displayPct = raw;
-      barWidth = raw;
-    } else {
-      displayPct = clamp(raw, 0, 100);
-      barWidth = displayPct;
-    }
-    const isAi = verdict === "AI-generated";
+    const displayPct = clamp(Math.round(Number(aiProbability) || 0), 0, 100);
+    const isAi =
+      verdict === "AI-generated" ||
+      String(verdict || "")
+        .toLowerCase()
+        .includes("ai-generated");
     panel.textContent = "";
     const card = document.createElement("div");
     card.className = "veritas-check-ai-card";
@@ -2680,10 +2698,10 @@
     head.className = "veritas-check-ai-head";
     const title = document.createElement("span");
     title.className = "veritas-check-ai-title";
-    title.textContent = "Check AI";
+    title.textContent = "Check AI · AEGIS";
     const ver = document.createElement("span");
     ver.className = `veritas-check-ai-verdict ${isAi ? "veritas-check-ai-verdict--ai" : "veritas-check-ai-verdict--real"}`;
-    ver.textContent = verdict;
+    ver.textContent = verdict || (isAi ? "AI-generated" : "Real");
     head.appendChild(title);
     head.appendChild(ver);
 
@@ -2694,12 +2712,12 @@
     const barWrap = document.createElement("div");
     barWrap.className = "veritas-check-ai-bar";
     const bar = document.createElement("span");
-    bar.style.width = `${barWidth}%`;
+    bar.style.width = `${displayPct}%`;
     barWrap.appendChild(bar);
 
     const expl = document.createElement("p");
     expl.className = "veritas-check-ai-expl";
-    expl.textContent = String(explanation || "");
+    expl.textContent = String(explanation || "Analysed with AEGIS");
 
     card.appendChild(head);
     card.appendChild(meter);
@@ -2917,12 +2935,15 @@
     const aegisRaw = Number(data.detectors?.aegis?.ai_generated_probability);
     const aiProb = Number.isFinite(aegisRaw) ? aegisRaw : Number(data.ai_probability);
     const aiPct = Math.round(aiProb * 100);
-    const realPct = Math.round((1 - aiProb) * 100);
+    const realFromModel = Number(data.real_probability);
+    const realPct = Number.isFinite(realFromModel)
+      ? Math.round(realFromModel * 100)
+      : Math.round((1 - aiProb) * 100);
     const conf = formatConfidenceLabel(data.confidence) || "Low";
     const leansAi = aiProb >= 0.5;
 
-    if (!Number.isFinite(realPct)) {
-      throw new Error("Unable to analyze this video");
+    if (!Number.isFinite(aiProb) || !Number.isFinite(realPct)) {
+      throw new Error("Unable to analyze with AEGIS");
     }
 
     panel.textContent = "";
@@ -2933,18 +2954,18 @@
     head.className = "veritas-check-ai-head";
     const title = document.createElement("span");
     title.className = "veritas-check-ai-title";
-    title.textContent = "Real Score";
+    title.textContent = "AEGIS · Real Score";
     const ver = document.createElement("span");
     ver.className = `veritas-check-ai-verdict ${
       leansAi ? "veritas-check-ai-verdict--ai" : "veritas-check-ai-verdict--real"
     }`;
-    ver.textContent = String(realPct);
+    ver.textContent = String(clamp(realPct, 0, 100));
     head.appendChild(title);
     head.appendChild(ver);
 
     const meter = document.createElement("div");
     meter.className = "veritas-check-ai-meter";
-    meter.innerHTML = `<span>0=AI · 100=Real</span><strong>${realPct}</strong>`;
+    meter.innerHTML = `<span>0=AI · 100=Real</span><strong>${clamp(realPct, 0, 100)}</strong>`;
 
     const barWrap = document.createElement("div");
     barWrap.className = "veritas-check-ai-bar";
@@ -2954,8 +2975,7 @@
 
     const expl = document.createElement("p");
     expl.className = "veritas-check-ai-expl";
-    expl.textContent =
-      `AI: ${Number.isFinite(aiPct) ? aiPct : "—"} · Confidence: ${conf}`;
+    expl.textContent = `AEGIS · AI ${Number.isFinite(aiPct) ? aiPct : "—"}% · Confidence: ${conf}`;
 
     card.appendChild(head);
     card.appendChild(meter);
@@ -2965,6 +2985,8 @@
   }
 
   function attachCheckAiToHost(host, captureRoot) {
+    // Check AI is Instagram-only (feed + Reels) and always runs through AEGIS on :5051.
+    if (!isInstagram) return;
     if (host.querySelector(".veritas-check-ai-btn")) return;
     ensureIgReelWindowGuard();
 
@@ -2986,9 +3008,9 @@
 
       const onReel =
         host.getAttribute("data-veritas-reel-checkai-host") === "1" ||
-        (typeof isInstagramReelSurface === "function" && isInstagram && isInstagramReelSurface());
+        (typeof isInstagramReelSurface === "function" && isInstagramReelSurface());
 
-      loadingCard.textContent = onReel ? "Analysing using AEGIS" : "Analyzing image…";
+      loadingCard.textContent = "Analysing using AEGIS";
       panel.appendChild(loadingCard);
       btn.disabled = true;
 
@@ -3041,12 +3063,32 @@
           return;
         }
 
+        // Feed / posts: still AEGIS (never the old random OpenAI mock /check-ai path).
+        loadingCard.textContent = "Analysing using AEGIS";
         const liveRoot = host._veritasCaptureRoot || captureRoot;
-        const payload = await captureMediaForCheckAi(liveRoot, { hideEls: [host] });
-        const result = await checkAiAnalyze(payload);
+        const captured = await captureMediaForCheckAi(liveRoot, { hideEls: [host] });
+        if (!captured) {
+          throw new Error("No capturable image or video in this post.");
+        }
+        const imagePayload = {};
+        if (captured.imageBase64) imagePayload.imageBase64 = captured.imageBase64;
+        if (Array.isArray(captured.imagesBase64) && captured.imagesBase64.length) {
+          imagePayload.imagesBase64 = captured.imagesBase64;
+        }
+        if (captured.imageUrl) imagePayload.imageUrl = captured.imageUrl;
+        if (!imagePayload.imageBase64 && !imagePayload.imagesBase64 && !imagePayload.imageUrl) {
+          throw new Error("No capturable image or video in this post.");
+        }
+
+        const data = await requestDetectImage(imagePayload);
         if (panel.dataset.veritasCheckAiDismissed === "1") return;
-        renderCheckAiResult(panel, result);
-        setCheckAiButtonAfterResult(btn, result);
+        if (!data || data.success !== true) {
+          throw new Error(data?.error || "AEGIS detection failed");
+        }
+        renderReelVideoDetectResult(panel, data);
+        setCheckAiButtonAfterResult(btn, {
+          verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
+        });
       } catch (e) {
         if (panel.dataset.veritasCheckAiDismissed === "1") return;
         panel.textContent = "";
@@ -3425,13 +3467,18 @@
   }
 
   async function requestDetectImage(payload) {
-    const bg = await sendMessageToExtension({ type: "VERITAS_DETECT_IMAGE", ...payload });
+    const bg = await sendMessageToExtension({
+      type: "VERITAS_DETECT_IMAGE",
+      imageBase64: payload?.imageBase64,
+      imagesBase64: payload?.imagesBase64,
+      imageUrl: payload?.imageUrl,
+    });
     if (bg) {
       if (bg.ok === true && bg.data && bg.data.success === true) return bg.data;
       const err = formatExtensionMessagingError(bg?.error || "Unable to analyze this screenshot");
       if (/failed to fetch|ECONNREFUSED|could not reach|network/i.test(err)) {
         throw new Error(
-          "Cannot reach AEGIS/VideoMAE. Open http://127.0.0.1:5051/health in Chrome — if it fails, run: npm run install-autostart"
+          "Cannot reach AEGIS. Open http://127.0.0.1:5051/health in Chrome — if it fails, run: npm run install-autostart"
         );
       }
       throw new Error(err);
@@ -3484,9 +3531,9 @@
     const video = findPrimaryInstagramReelVideo();
     if (!video) {
       // Mid-swipe gap: hide existing portal but keep it for a moment.
-      document.querySelectorAll("[data-veritas-reel-checkai-host]").forEach((hostEl) => {
+    document.querySelectorAll("[data-veritas-reel-checkai-host]").forEach((hostEl) => {
         hostEl.style.visibility = "hidden";
-      });
+    });
       return;
     }
 
@@ -3763,10 +3810,13 @@
     ensureFactCheckLogoOnPost(el);
 
     const host = ensurePostToolbarHost(el);
-    // Check AI vision toolbar: Instagram/etc. only — not X or LinkedIn.
-    if (!isX && !isLinkedIn) attachCheckAiToHost(host, el);
-    if (isLinkedIn) {
-      el.querySelectorAll(".veritas-check-ai-row, .veritas-check-ai-panel").forEach((n) => n.remove());
+    // Check AI is Instagram-only and always uses AEGIS (:5051).
+    if (isInstagram) {
+      attachCheckAiToHost(host, el);
+    } else {
+      el.querySelectorAll(".veritas-check-ai-row, .veritas-check-ai-panel, .veritas-check-ai-btn").forEach((n) =>
+        n.remove()
+      );
     }
 
     /** X: AI tick on the post toolbar (fact-check logo removed). */
@@ -3801,8 +3851,8 @@
         "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor, .veritas-fc-popover, .veritas-fc-logo-btn"
       )
       .forEach((n) => n.remove());
-    if (isLinkedIn) {
-      // Strip leftover Check AI controls from LinkedIn (notifications / feed).
+    if (!isInstagram) {
+      // Check AI must never appear outside Instagram.
       document
         .querySelectorAll(".veritas-check-ai-row, .veritas-check-ai-panel, .veritas-check-ai-btn")
         .forEach((n) => n.remove());
