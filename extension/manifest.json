@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Veritas Trust Layer",
-  "version": "0.2.33",
+  "version": "0.2.34",
   "description": "Credibility scores, AI/bot probability, and Veritas Insight injected into your feed.",
   "action": {
     "default_title": "Veritas"

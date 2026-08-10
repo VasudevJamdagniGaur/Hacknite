@@ -1622,9 +1622,9 @@
       badge.style.marginRight = "0";
     }
 
-    // LinkedIn profile: paint a local score immediately so the pill is visible on first paint
-    // (SPA navigations used to wait on network / delayed scans and looked "missing").
-    if (extraBadgeClass === "veritas-account-badge--linkedin") {
+    // Paint a score immediately (pinned overrides / local mock) so pills show like 0.1.x
+    // without waiting on the network — then refresh from API when available.
+    if (!extraBadgeClass || extraBadgeClass === "veritas-account-badge--linkedin") {
       try {
         const raw = localMockRealness(scoreKey);
         const { score, boosted } = resolveDisplayedAccountScore(scoreKey, raw, anchor);
@@ -1680,16 +1680,29 @@
     else el.classList.add("veritas-ig-realness--low");
   }
 
-  /** True if this handle already has a score badge near the same reel/post header. */
+  /** True if this handle already has a score badge in the same local post/header row. */
   function igHandleAlreadyBadgedNear(anchor, handle) {
     const key = String(handle || "").toLowerCase();
-    if (!key) return false;
-    // Page-wide: one authenticity score per Instagram handle.
-    const all = document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]");
-    for (const b of all) {
+    if (!key || !(anchor instanceof Element)) return false;
+    const root =
+      anchor.closest("article, [role='article'], section, header") ||
+      anchor.parentElement ||
+      anchor;
+    const badges = root.querySelectorAll?.(".veritas-ig-realness[data-veritas-score-key]") || [];
+    for (const b of badges) {
       if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() === key) {
         return true;
       }
+    }
+    // Same flex/inline row as the username link.
+    let n = anchor.parentElement;
+    for (let i = 0; i < 4 && n; i++) {
+      for (const b of n.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]")) {
+        if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() === key) {
+          return true;
+        }
+      }
+      n = n.parentElement;
     }
     return false;
   }
@@ -1772,8 +1785,8 @@
       if ((el.textContent || "").replace(/\s+/g, " ").trim().length > h.length + 2 && !ownText) continue;
       const r = el.getBoundingClientRect();
       if (r.width < 4 || r.height < 4) continue;
-      if (r.top > Math.min(420, window.innerHeight * 0.55)) continue;
-      if (r.left < 100) continue; // skip left rail
+      if (r.top > Math.min(520, window.innerHeight * 0.65)) continue;
+      if (r.left < 80) continue; // skip left rail
       const score = 2000 - r.top * 2 + r.width;
       if (score > bestScore) {
         bestScore = score;
@@ -1786,17 +1799,18 @@
   function scanInstagram() {
     injectStyleOnce();
 
-    // Profile pages: pin score directly behind the username (leomessi 67).
+    // Profile pages: pin score next to the username (talk.with.adarsh 92).
     const profileHandle = getInstagramProfileHandleFromPath();
-    if (profileHandle && !igHandleAlreadyBadgedNear(document.body, profileHandle)) {
+    if (profileHandle) {
       const uname = findInstagramProfileUsernameNode(profileHandle);
-      if (uname) {
+      if (uname && !igHandleAlreadyBadgedNear(uname, profileHandle)) {
         attachAccountScoreBadge(uname, profileHandle, false, null, false);
       }
     }
 
+    // 0.1.3-style: badge every visible author username in feed / reels / suggestions.
     const anchors = Array.from(document.querySelectorAll('a[href^="/"], a[href*="instagram.com"]'));
-    const candidates = [];
+    const slotSeen = new Set();
 
     for (const a of anchors) {
       if (a.getAttribute(IG_TAG) === "1") continue;
@@ -1815,50 +1829,55 @@
         a.setAttribute(IG_TAG, "1");
         continue;
       }
-      // On a profile page, don't attach to random other links for that same handle.
-      if (profileHandle && handle.toLowerCase() === profileHandle.toLowerCase()) {
+
+      // Prefer the username text link; skip weak avatar-adjacent hrefs in same row if a better one exists.
+      const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text) {
         a.setAttribute(IG_TAG, "1");
         continue;
       }
 
       const r = a.getBoundingClientRect();
       if (r.width < 2 && r.height < 2) continue;
+
+      // Same slotting as 0.1.3 — same person can score on many posts.
+      const slot = `${handle.toLowerCase()}@${Math.round(r.top / 320)}_${Math.round(r.left / 200)}`;
+      if (slotSeen.has(slot)) {
+        a.setAttribute(IG_TAG, "1");
+        continue;
+      }
       if (igHandleAlreadyBadgedNear(a, handle)) {
         a.setAttribute(IG_TAG, "1");
         continue;
       }
 
-      candidates.push({
-        a,
-        handle,
-        top: r.top,
-        left: r.left,
-        score: igAnchorUsernameScore(a, handle),
-      });
-    }
-
-    // Exactly one badge per handle on the page (feed/reels/posts).
-    candidates.sort((x, y) => y.score - x.score || x.top - y.top || x.left - y.left);
-    const takenHandles = new Set();
-    if (profileHandle) takenHandles.add(profileHandle.toLowerCase());
-    for (const c of candidates) {
-      const hk = c.handle.toLowerCase();
-      if (takenHandles.has(hk)) {
-        c.a.setAttribute(IG_TAG, "1");
+      // On profile pages, skip extra links for the owner (header already pinned).
+      if (profileHandle && handle.toLowerCase() === profileHandle.toLowerCase()) {
+        a.setAttribute(IG_TAG, "1");
         continue;
       }
-      if (igHandleAlreadyBadgedNear(c.a, c.handle)) {
-        c.a.setAttribute(IG_TAG, "1");
-        continue;
+
+      // Prefer higher username-match anchors in the same slot: collect then attach best.
+      slotSeen.add(slot);
+      a.setAttribute(IG_TAG, "1");
+      // If this lookalike is a weak match, try to find a sibling with exact handle text.
+      let target = a;
+      const row = a.closest("header, article, [role='article'], div") || a.parentElement;
+      if (row && igAnchorUsernameScore(a, handle) < 80) {
+        const better = Array.from(row.querySelectorAll('a[href^="/"], a[href*="instagram.com"]')).find((x) => {
+          if (instagramHandleFromHref(x.getAttribute("href") || "")?.toLowerCase() !== handle.toLowerCase()) {
+            return false;
+          }
+          if (isLikelyInstagramAvatarLink(x) || isInstagramNavChromeLink(x)) return false;
+          return igAnchorUsernameScore(x, handle) >= 80;
+        });
+        if (better) target = better;
       }
-      takenHandles.add(hk);
-      c.a.setAttribute(IG_TAG, "1");
-      // Place score behind the username: handle 67
-      attachAccountScoreBadge(c.a, c.handle, isInstagramReelSurface(), null, false);
+      if (igHandleAlreadyBadgedNear(target, handle)) continue;
+      attachAccountScoreBadge(target, handle, isInstagramReelSurface(), null, false);
     }
 
-    // Remove leftover duplicates / misplaced nav badges.
-    const byHandle = new Map();
+    // Strip chrome leftovers only — do NOT collapse to one badge per handle (feed needs many).
     document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]").forEach((b) => {
       if (b.closest('nav, [role="navigation"], [role="tablist"]')) {
         b.remove();
@@ -1867,22 +1886,8 @@
       const br = b.getBoundingClientRect();
       if (br.left < 96 && br.bottom > (window.innerHeight || 0) - 140) {
         b.remove();
-        return;
       }
-      const handle = String(b.getAttribute("data-veritas-score-key") || "").toLowerCase();
-      if (!handle) return;
-      if (!byHandle.has(handle)) byHandle.set(handle, []);
-      byHandle.get(handle).push(b);
     });
-    for (const group of byHandle.values()) {
-      if (group.length < 2) continue;
-      group.sort((x, y) => {
-        const rx = x.getBoundingClientRect();
-        const ry = y.getBoundingClientRect();
-        return rx.top - ry.top || rx.left - ry.left;
-      });
-      for (let i = 1; i < group.length; i++) group[i].remove();
-    }
   }
 
   function scanXAccountBadges() {
@@ -4210,6 +4215,69 @@
     window.setInterval(() => {
       if (isInstagramReelSurface()) tickReelPortal();
     }, 400);
+
+    // Instagram SPA: profile / feed navigations don't reload the extension.
+    let igLastPath = "";
+    let igBurstTimer = null;
+    const kickIgProfileBurst = () => {
+      const ph = getInstagramProfileHandleFromPath();
+      if (!ph) {
+        if (igBurstTimer) {
+          window.clearInterval(igBurstTimer);
+          igBurstTimer = null;
+        }
+        return;
+      }
+      if (igBurstTimer) window.clearInterval(igBurstTimer);
+      let tries = 0;
+      const tick = () => {
+        tries += 1;
+        try {
+          scanInstagram();
+        } catch {
+          /* ignore */
+        }
+        const uname = findInstagramProfileUsernameNode(ph);
+        const ok = uname && igHandleAlreadyBadgedNear(uname, ph);
+        if (ok || tries >= 50) {
+          window.clearInterval(igBurstTimer);
+          igBurstTimer = null;
+        }
+      };
+      tick();
+      igBurstTimer = window.setInterval(tick, 150);
+    };
+    const onIgPathMaybeChanged = () => {
+      const path = location.pathname || "";
+      if (path === igLastPath) return;
+      igLastPath = path;
+      document.querySelectorAll(`[${IG_TAG}="1"]`).forEach((el) => el.removeAttribute(IG_TAG));
+      kickIgProfileBurst();
+      try {
+        scanInstagram();
+      } catch {
+        /* ignore */
+      }
+    };
+    try {
+      const _push = history.pushState.bind(history);
+      const _replace = history.replaceState.bind(history);
+      history.pushState = function (...args) {
+        const ret = _push(...args);
+        onIgPathMaybeChanged();
+        return ret;
+      };
+      history.replaceState = function (...args) {
+        const ret = _replace(...args);
+        onIgPathMaybeChanged();
+        return ret;
+      };
+    } catch {
+      /* ignore */
+    }
+    window.addEventListener("popstate", onIgPathMaybeChanged);
+    window.setInterval(onIgPathMaybeChanged, 500);
+    onIgPathMaybeChanged();
     return;
   }
 
