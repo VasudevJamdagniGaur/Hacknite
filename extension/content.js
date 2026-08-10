@@ -3482,7 +3482,11 @@
     ensureFactCheckLogoOnPost(el);
 
     const host = ensurePostToolbarHost(el);
-    if (!isX) attachCheckAiToHost(host, el);
+    // Check AI vision toolbar: Instagram/etc. only — not X or LinkedIn.
+    if (!isX && !isLinkedIn) attachCheckAiToHost(host, el);
+    if (isLinkedIn) {
+      el.querySelectorAll(".veritas-check-ai-row, .veritas-check-ai-panel").forEach((n) => n.remove());
+    }
 
     /** X: mount AI tick beside fact-check logo (same anchor) so they never overlap */
     let xOriginContainer = host;
@@ -3515,6 +3519,12 @@
 
   function scanFeed() {
     injectStyleOnce();
+    if (isLinkedIn) {
+      // Strip leftover Check AI controls from LinkedIn (notifications / feed).
+      document
+        .querySelectorAll(".veritas-check-ai-row, .veritas-check-ai-panel, .veritas-check-ai-btn")
+        .forEach((n) => n.remove());
+    }
     const posts = findCandidatePosts();
     for (const el of posts) processPost(el);
   }
