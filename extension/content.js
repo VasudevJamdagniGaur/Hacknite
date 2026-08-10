@@ -814,10 +814,11 @@
         z-index: 2147483646;
         display: inline-flex;
         flex-shrink: 0;
+        align-self: center;
         min-width: 2rem;
         padding: 2px 8px;
-        margin-left: 0;
-        margin-right: 6px;
+        margin-left: 4px;
+        margin-right: 4px;
         font-size: 12px;
         line-height: 1.25;
         font-weight: 700;
@@ -1072,6 +1073,66 @@
     const parts = (tweet.getAttribute("data-veritas-x-badged-users") || "").split(",").filter(Boolean);
     if (!parts.includes(scoreKey)) parts.push(scoreKey);
     tweet.setAttribute("data-veritas-x-badged-users", parts.join(","));
+  }
+
+  /** Display-name link inside User-Name (not the @handle link). */
+  function findXDisplayNameLink(anchor) {
+    const root =
+      anchor.closest('[data-testid="User-Name"], [data-testid="UserName"], [data-testid="User-Names"]') ||
+      anchor.parentElement;
+    if (!root) return anchor;
+    const links = Array.from(
+      root.querySelectorAll('a[href^="/"], a[href*="x.com/"], a[href*="twitter.com/"]')
+    );
+    const display = links.find((l) => {
+      if (isLikelyGenericAvatarLink(l)) return false;
+      if (!xHandleFromHref(l.getAttribute("href") || "")) return false;
+      const t = (l.textContent || "").replace(/\s+/g, " ").trim();
+      return t.length > 0 && !t.startsWith("@");
+    });
+    return display || anchor;
+  }
+
+  /** Blue verified tick near the display name (insert score just before this). */
+  function findXVerifiedTickNear(displayLink) {
+    const root =
+      displayLink.closest('[data-testid="User-Name"], [data-testid="UserName"], [data-testid="User-Names"]') ||
+      displayLink.parentElement;
+    if (!root) return null;
+    const svg =
+      root.querySelector('svg[aria-label*="Verified" i]') ||
+      root.querySelector('[aria-label*="Verified account" i]') ||
+      root.querySelector('[data-testid="icon-verified"]');
+    if (!svg) return null;
+    // Prefer the immediate wrapper X uses around the tick so layout stays inline.
+    let node = svg;
+    while (node && node.parentElement && node.parentElement !== root) {
+      const p = node.parentElement;
+      if (p === displayLink || displayLink.contains(p)) break;
+      if (p.children.length <= 3) node = p;
+      else break;
+    }
+    return node;
+  }
+
+  /**
+   * Place X score between display name and blue tick:
+   *   Silly Point  [100]  ✓  ·  @handle
+   */
+  function placeXScoreBetweenNameAndTick(badge, anchor) {
+    const displayLink = findXDisplayNameLink(anchor);
+    const tick = findXVerifiedTickNear(displayLink);
+    badge.classList.add("veritas-ig-realness--next-to-handle");
+    badge.style.marginLeft = "4px";
+    badge.style.marginRight = "4px";
+    if (tick && tick.parentNode && !displayLink.contains(tick)) {
+      tick.parentNode.insertBefore(badge, tick);
+    } else if (displayLink.parentNode) {
+      displayLink.insertAdjacentElement("afterend", badge);
+    } else {
+      anchor.insertAdjacentElement("afterend", badge);
+    }
+    return displayLink;
   }
 
   /** X sometimes nests links inside open shadow roots — normal querySelector misses them. */
@@ -1451,8 +1512,10 @@
       badge.classList.add("veritas-ig-realness--next-to-handle");
       badge.style.marginLeft = "6px";
       badge.style.marginRight = "0";
+    } else if (extraBadgeClass === "veritas-account-badge--x") {
+      // X: between display name and blue tick (not above the name).
+      placeXScoreBetweenNameAndTick(badge, anchor);
     } else if (insertBadgeBeforeAnchor) {
-      // Kept for X; Instagram uses after-username placement below.
       anchor.insertAdjacentElement("beforebegin", badge);
       badge.classList.add("veritas-ig-realness--next-to-handle");
       badge.style.marginLeft = "0";
@@ -1726,6 +1789,16 @@
       if (isLikelyGenericAvatarLink(a)) continue;
       if (!shouldAttachXAccountBadge(a)) continue;
 
+      // Prefer the display-name link; skip bare @handle links in the same User-Name row.
+      const t = (a.textContent || "").replace(/\s+/g, " ").trim();
+      if (
+        t.startsWith("@") &&
+        a.closest('[data-testid="User-Name"], [data-testid="UserName"], [data-testid="User-Names"]')
+      ) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+
       const tweet = a.closest('[data-testid="tweet"]');
       if (tweet && xTweetAlreadyBadgedForUser(tweet, scoreKey)) {
         a.setAttribute(SOCIAL_TAG, "1");
@@ -1741,7 +1814,7 @@
       }
       slotSeen.add(slot);
       a.setAttribute(SOCIAL_TAG, "1");
-      attachAccountScoreBadge(a, scoreKey, false, "veritas-account-badge--x", true);
+      attachAccountScoreBadge(a, scoreKey, false, "veritas-account-badge--x", false);
       if (tweet) xTweetMarkBadgedForUser(tweet, scoreKey);
     }
   }
