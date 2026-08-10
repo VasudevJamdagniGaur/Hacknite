@@ -137,3 +137,5 @@ INFO:     127.0.0.1:51687 - "GET /health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54689 - "GET /health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54689 - "POST /detect-image-json HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57767 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60236 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57847 - "GET /health HTTP/1.1" 200 OK

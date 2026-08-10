@@ -1498,26 +1498,44 @@
   function igHandleAlreadyBadgedNear(anchor, handle) {
     const key = String(handle || "").toLowerCase();
     if (!key) return false;
-    const root =
-      anchor.closest("header") ||
-      anchor.closest("article") ||
-      anchor.closest('[role="presentation"]') ||
-      anchor.parentElement;
-    if (root) {
-      const local = root.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]");
-      for (const b of local) {
-        if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() === key) {
-          return true;
-        }
-      }
-    }
-    const ar = anchor.getBoundingClientRect();
+    // Page-wide: one authenticity score per Instagram handle.
     const all = document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]");
     for (const b of all) {
-      if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() !== key) continue;
-      const br = b.getBoundingClientRect();
-      if (Math.abs(br.top - ar.top) < 56 && Math.abs(br.left - ar.left) < 360) return true;
+      if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() === key) {
+        return true;
+      }
     }
+    return false;
+  }
+
+  /** Left rail / bottom nav profile shortcuts — not post authors. */
+  function isInstagramNavChromeLink(a) {
+    if (!a) return true;
+    if (a.closest('nav, [role="navigation"]')) return true;
+    const label = `${a.getAttribute("aria-label") || ""} ${a.textContent || ""}`.toLowerCase();
+    if (/\b(home|search|explore|reels|messages|notifications|create|more)\b/.test(label) && !label.includes("@")) {
+      const r = a.getBoundingClientRect();
+      if (r.left < 120) return true;
+    }
+    const r = a.getBoundingClientRect();
+    // Desktop left icon rail
+    if (r.left < 96 && r.width <= 96) return true;
+    // Bottom-left profile chip in the rail
+    if (r.left < 120 && r.bottom > (window.innerHeight || 0) - 140 && r.width < 140) return true;
+    return false;
+  }
+
+  /** Edit profile / View archive / Follow etc. — never badge these. */
+  function isInstagramActionOrWideLink(a) {
+    const text = (a.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (
+      /^(edit profile|view archive|following|follow|message|requested|promote|email)$/i.test(text) ||
+      /\b(edit profile|view archive)\b/.test(text)
+    ) {
+      return true;
+    }
+    const r = a.getBoundingClientRect();
+    if (r.width > 140) return true;
     return false;
   }
 
@@ -1541,6 +1559,14 @@
       const handle = instagramHandleFromHref(a.getAttribute("href") || "");
       if (!handle) continue;
       if (isLikelyInstagramAvatarLink(a)) continue;
+      if (isInstagramNavChromeLink(a)) {
+        a.setAttribute(IG_TAG, "1");
+        continue;
+      }
+      if (isInstagramActionOrWideLink(a)) {
+        a.setAttribute(IG_TAG, "1");
+        continue;
+      }
 
       const r = a.getBoundingClientRect();
       if (r.width < 2 && r.height < 2) continue;
@@ -1558,13 +1584,12 @@
       });
     }
 
-    // One badge per handle per vertical band (same header row).
-    candidates.sort((x, y) => y.score - x.score || x.left - y.left);
-    const taken = new Set();
+    // Exactly one badge per handle on the page (not per row — avoids sidebar + profile doubles).
+    candidates.sort((x, y) => y.score - x.score || x.top - y.top || x.left - y.left);
+    const takenHandles = new Set();
     for (const c of candidates) {
-      const band = Math.round(c.top / 64);
-      const dedupeKey = `${c.handle.toLowerCase()}@${band}`;
-      if (taken.has(dedupeKey)) {
+      const hk = c.handle.toLowerCase();
+      if (takenHandles.has(hk)) {
         c.a.setAttribute(IG_TAG, "1");
         continue;
       }
@@ -1572,25 +1597,38 @@
         c.a.setAttribute(IG_TAG, "1");
         continue;
       }
-      taken.add(dedupeKey);
+      takenHandles.add(hk);
       c.a.setAttribute(IG_TAG, "1");
+      // Reel wrap only on Reels; profile/feed keep a simple after-username pill.
       attachAccountScoreBadge(c.a, c.handle, isInstagramReelSurface());
     }
 
-    // Clean accidental duplicates already in the DOM (same handle, same row).
-    const byKey = new Map();
+    // Remove leftover duplicates for the same handle (keep the best / first remaining).
+    const byHandle = new Map();
     document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]").forEach((b) => {
+      // Drop badges that ended up inside the left nav.
+      if (b.closest('nav, [role="navigation"]')) {
+        b.remove();
+        return;
+      }
+      const br = b.getBoundingClientRect();
+      if (br.left < 96 && br.bottom > (window.innerHeight || 0) - 140) {
+        b.remove();
+        return;
+      }
       const handle = String(b.getAttribute("data-veritas-score-key") || "").toLowerCase();
       if (!handle) return;
-      const r = b.getBoundingClientRect();
-      const k = `${handle}@${Math.round(r.top / 64)}`;
-      if (!byKey.has(k)) byKey.set(k, []);
-      byKey.get(k).push(b);
+      if (!byHandle.has(handle)) byHandle.set(handle, []);
+      byHandle.get(handle).push(b);
     });
-    for (const group of byKey.values()) {
+    for (const group of byHandle.values()) {
       if (group.length < 2) continue;
-      // Keep the rightmost badge (usually next to the username text).
-      group.sort((x, y) => y.getBoundingClientRect().left - x.getBoundingClientRect().left);
+      // Keep the one closest to a visible username (highest top-left in main content).
+      group.sort((x, y) => {
+        const rx = x.getBoundingClientRect();
+        const ry = y.getBoundingClientRect();
+        return rx.left - ry.left || rx.top - ry.top;
+      });
       for (let i = 1; i < group.length; i++) group[i].remove();
     }
   }
