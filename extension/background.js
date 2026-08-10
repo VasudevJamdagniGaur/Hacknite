@@ -283,12 +283,148 @@ function analyzeTextViaApi(text, username, userId, source) {
     });
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+function base64ToUint8Array(b64) {
+  const raw = String(b64 || "").replace(/^data:[^;]+;base64,/i, "");
+  const bin = atob(raw);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Fetch an accessible video URL (extension host permissions) or accept bytes,
+ * then POST multipart to /api/detect-video. Does not bypass DRM/CORS via hacks —
+ * fetch uses normal extension-allowed networking.
+ *
+ * @param {{ videoUrl?: string, videoBase64?: string, mimeType?: string, filename?: string }} payload
+ */
+function detectVideoViaApi(payload) {
+  const run = async () => {
+    let bytes = null;
+    let mimeType = payload.mimeType || "video/mp4";
+    let filename = payload.filename || "reel.mp4";
+
+    if (payload.videoBase64) {
+      bytes = base64ToUint8Array(payload.videoBase64);
+    } else if (payload.videoUrl) {
+      const url = String(payload.videoUrl);
+      if (!/^https?:\/\//i.test(url)) {
+        throw new Error("Video URL is not fetchable");
+      }
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 60000);
+      let r;
+      try {
+        r = await fetch(url, {
+          method: "GET",
+          credentials: "omit",
+          redirect: "follow",
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(tid);
+      }
+      if (!r.ok) throw new Error(`Video fetch failed: ${r.status}`);
+      const ct = r.headers.get("content-type") || "";
+      if (ct && ct.startsWith("video/")) mimeType = ct.split(";")[0].trim();
+      const buf = await r.arrayBuffer();
+      bytes = new Uint8Array(buf);
+      try {
+        const u = new URL(url);
+        const base = u.pathname.split("/").pop() || "reel.mp4";
+        if (/\.(mp4|mov|webm|m4v|mkv|avi)(\?|$)/i.test(base)) filename = base.split("?")[0];
+      } catch {
+        /* keep default filename */
+      }
+    } else {
+      throw new Error("Missing videoUrl or videoBase64");
+    }
+
+    if (!bytes || bytes.byteLength < 256) {
+      throw new Error("Video data is empty or too small");
+    }
+
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: mimeType }), filename);
+
+    const ctrl2 = new AbortController();
+    const tid2 = setTimeout(() => ctrl2.abort(), 180000);
+    let resp;
+    try {
+      resp = await fetch(`${VERITAS_API_BASE}/detect-video`, {
+        method: "POST",
+        body: form,
+        signal: ctrl2.signal,
+      });
+    } finally {
+      clearTimeout(tid2);
+    }
+
+    const text = await resp.text().catch(() => "");
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`Detect video failed: ${resp.status}`);
+    }
+    if (!resp.ok || !data || data.success !== true) {
+      throw new Error(
+        (data && (data.error || data.detail)) || `Detect video failed: ${resp.status}`
+      );
+    }
+    return data;
+  };
+
+  return run();
+}
+
+/**
+ * Capture the visible tab as JPEG (used when Instagram/CDN video frames
+ * cannot be read via canvas due to CORS taint).
+ * @param {number|undefined} windowId
+ * @returns {Promise<string>} data URL
+ */
+function captureVisibleTabDataUrl(windowId) {
+  const opts = { format: "jpeg", quality: 88 };
+  if (typeof chrome !== "undefined" && chrome.tabs?.captureVisibleTab) {
+    return new Promise((resolve, reject) => {
+      try {
+        const cb = (dataUrl) => {
+          const err = chrome.runtime?.lastError;
+          if (err) {
+            reject(new Error(err.message || String(err)));
+            return;
+          }
+          if (!dataUrl) {
+            reject(new Error("Tab capture returned empty image"));
+            return;
+          }
+          resolve(dataUrl);
+        };
+        if (typeof windowId === "number") chrome.tabs.captureVisibleTab(windowId, opts, cb);
+        else chrome.tabs.captureVisibleTab(opts, cb);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  return Promise.reject(new Error("tabs.captureVisibleTab is unavailable"));
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const t = msg?.type;
 
   if (t === "VERITAS_ANALYZE" && typeof msg.text === "string" && msg.text.length > 0) {
     analyzeTextViaApi(msg.text, msg.username, msg.userId, msg.source)
       .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (t === "VERITAS_CAPTURE_TAB") {
+    const windowId = sender?.tab?.windowId;
+    captureVisibleTabDataUrl(windowId)
+      .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
@@ -319,6 +455,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (t === "VERITAS_FACT_CHECK" && typeof msg.text === "string" && msg.text.length >= 40) {
     factCheckViaApi({ text: msg.text, url: msg.url, title: msg.title })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (t === "VERITAS_DETECT_VIDEO" && (msg.videoUrl || msg.videoBase64)) {
+    detectVideoViaApi({
+      videoUrl: msg.videoUrl,
+      videoBase64: msg.videoBase64,
+      mimeType: msg.mimeType,
+      filename: msg.filename,
+    })
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;

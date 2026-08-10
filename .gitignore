@@ -4,3 +4,15 @@ node_modules/
 .env
 **/.env
 backend/.env
+
+# video-detector
+video-detector/uploads/*
+!video-detector/uploads/.gitkeep
+video-detector/models/*
+!video-detector/models/.gitkeep
+video-detector/test_video.mp4
+video-detector/**/__pycache__/
+__pycache__/
+*.pyc
+.venv/
+venv/

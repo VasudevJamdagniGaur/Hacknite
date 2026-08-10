@@ -67,6 +67,10 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log(`  Fact check: POST http://localhost:${env.PORT}/api/fact-check`);
     // eslint-disable-next-line no-console
+    console.log(`  Detect video: POST http://localhost:${env.PORT}/api/detect-video`);
+    // eslint-disable-next-line no-console
+    console.log(`  Video detector upstream: ${env.VIDEO_DETECTOR_URL || "http://127.0.0.1:5051"}`);
+    // eslint-disable-next-line no-console
     if (env.PORT === 5000) console.log("Backend running on port 5000");
   });
 }

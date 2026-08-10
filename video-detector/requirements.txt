@@ -1,0 +1,23 @@
+# Core API
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# PyTorch — install the CUDA wheel that matches your GPU if available, e.g.:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Hugging Face
+transformers>=4.38.0
+huggingface_hub>=0.21.0
+safetensors>=0.4.0
+
+# Official AEGIS (MusapYildiz/ai_video_detection_benchmark) dependencies
+timm>=1.0.0
+einops>=0.8.0
+opencv-python>=4.8.0
+decord>=0.6.0
+numpy>=1.24.0
+scipy>=1.11.0
+Pillow>=10.0.0

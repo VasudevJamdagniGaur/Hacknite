@@ -9,6 +9,7 @@ const amazonReviewScoresRoutes = require("./amazonReviewScores");
 const factCheckRoutes = require("./factCheck");
 const postsRoutes = require("./posts");
 const instagramRoutes = require("./instagram");
+const detectVideoRoutes = require("./detectVideo");
 
 const router = express.Router();
 
@@ -23,6 +24,7 @@ router.use("/amazon-review-scores", amazonReviewScoresRoutes);
 router.use("/fact-check", factCheckRoutes);
 router.use("/posts", postsRoutes);
 router.use("/instagram", instagramRoutes);
+router.use("/detect-video", detectVideoRoutes);
 
 module.exports = router;
 

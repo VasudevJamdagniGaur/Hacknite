@@ -28,6 +28,8 @@ const EnvSchema = z.object({
   GNEWS_API_KEY_2: z.string().optional().default(""),
   THENEWS_API_TOKEN: z.string().optional().default(""),
   THENEWS_API_TOKEN_2: z.string().optional().default(""),
+  /** Python video-detector service (AEGIS + VideoMAE). */
+  VIDEO_DETECTOR_URL: z.string().optional().default("http://127.0.0.1:5051"),
 });
 
 function getEnv() {
