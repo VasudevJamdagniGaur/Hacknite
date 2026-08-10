@@ -2190,7 +2190,7 @@
     head.className = "veritas-check-ai-head";
     const title = document.createElement("span");
     title.className = "veritas-check-ai-title";
-    title.textContent = "AEGIS";
+    title.textContent = "Real Score";
     const ver = document.createElement("span");
     ver.className = `veritas-check-ai-verdict ${
       leansAi ? "veritas-check-ai-verdict--ai" : "veritas-check-ai-verdict--real"
@@ -2201,7 +2201,7 @@
 
     const meter = document.createElement("div");
     meter.className = "veritas-check-ai-meter";
-    meter.innerHTML = `<span>Real score (0=AI · 100=Real)</span><strong>${realPct}</strong>`;
+    meter.innerHTML = `<span>0=AI · 100=Real</span><strong>${realPct}</strong>`;
 
     const barWrap = document.createElement("div");
     barWrap.className = "veritas-check-ai-bar";
