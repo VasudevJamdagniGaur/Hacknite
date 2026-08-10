@@ -5,6 +5,12 @@ node_modules/
 **/.env
 backend/.env
 
+# logs
+*.log
+**/*.log
+local-agent/logs/
+video-detector/logs/
+
 # video-detector
 video-detector/uploads/*
 !video-detector/uploads/.gitkeep

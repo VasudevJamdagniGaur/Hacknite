@@ -1590,6 +1590,24 @@
       badge.style.marginRight = "0";
     }
 
+    // LinkedIn profile: paint a local score immediately so the pill is visible on first paint
+    // (SPA navigations used to wait on network / delayed scans and looked "missing").
+    if (extraBadgeClass === "veritas-account-badge--linkedin") {
+      try {
+        const raw = localMockRealness(scoreKey);
+        const { score, boosted } = applyVerifiedAccountBonus(raw, anchor);
+        badge.textContent = String(score);
+        badge.setAttribute("data-veritas-display-score", String(score));
+        badge.classList.remove("veritas-ig-realness--loading");
+        applyRealnessClass(badge, score);
+        badge.title = boosted
+          ? `Veritas: ${score}/100 · +20 verified account (max 100) — click to review`
+          : `Veritas: ${score}/100 — click to review`;
+      } catch {
+        /* keep loading ellipsis */
+      }
+    }
+
     fetchAccountScore(scoreKey)
       .then((data) => {
         const raw = clamp(Math.round(Number(data.realnessScore) || 0), 0, 100);
@@ -2003,7 +2021,6 @@
     if (el.closest("aside, footer, nav, [role='navigation'], .scaffold-layout__aside, .global-nav")) {
       return false;
     }
-    // Right rail "More profiles for you"
     if (el.closest(".scaffold-layout__aside, [componentkey*='Aside'], .pv-other-entity")) {
       return false;
     }
@@ -2011,11 +2028,11 @@
     if (!t || t.length < 2) return false;
     if (isLinkedInHeadlineLike(t)) return false;
     const words = t.split(/\s+/).filter(Boolean);
-    if (words.length < 1 || words.length > 6) return false;
+    if (words.length < 1 || words.length > 8) return false;
     const r = el.getBoundingClientRect();
-    if (r.width < 16 || r.height < 8) return false;
-    if (r.bottom < -80 || r.top > Math.min(1100, window.innerHeight + 320)) return false;
-    if (r.left > window.innerWidth * 0.7) return false;
+    // During SPA mount the heading can be 0×0 for a few frames — still accept it.
+    if (r.width === 0 && r.height === 0 && !el.isConnected) return false;
+    if (r.left > window.innerWidth * 0.85) return false;
     return true;
   }
 
@@ -2129,12 +2146,11 @@
     let bestScore = -1;
     for (const el of nodes) {
       if (!isLinkedInProfileNameCandidate(el)) continue;
-      // Prefer real H1 / anonymize name over generic title divs.
       const r = el.getBoundingClientRect();
       const score =
         10000 -
-        Math.abs(Math.min(r.top, 400)) * 3 +
-        r.width +
+        Math.abs(Math.min(r.top || 0, 400)) * 3 +
+        (r.width || 40) +
         (el.tagName === "H1" ? 500 : 0) +
         (el.getAttribute("data-anonymize") === "person-name" ? 400 : 0) +
         (String(el.className || "").includes("heading") ? 80 : 0) +
@@ -2144,7 +2160,16 @@
         best = el;
       }
     }
-    return best;
+    if (best) return best;
+
+    // Last-resort (older 0.2.x behavior): first short main-column h1.
+    for (const el of document.querySelectorAll("main h1, .scaffold-layout__main h1, h1")) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (el.closest("aside, nav, footer, .global-nav, .scaffold-layout__aside")) continue;
+      const t = cleanLinkedInNameText(el.textContent || "");
+      if (t.length >= 2 && t.length <= 80 && !/[|]/.test(t)) return el;
+    }
+    return null;
   }
 
   /** Place score beside the LinkedIn display name — never stacked on top of it. */
@@ -3470,82 +3495,13 @@
   }
 
   function ensureFactCheckLogoOnPost(articleEl) {
-    if (!articleEl || articleEl.querySelector("[data-veritas-fc-logo]")) return;
-    const cs = getComputedStyle(articleEl);
-    if (cs.position === "static") articleEl.style.position = "relative";
-
-    const gid = `vfcg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-
-    const anchor = document.createElement("div");
-    anchor.className = "veritas-fc-anchor";
-    anchor.setAttribute("data-veritas-fc-wrap", "1");
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "veritas-fc-logo-btn";
-    btn.setAttribute("data-veritas-fc-logo", "1");
-    btn.setAttribute("aria-label", "Veritas fact check");
-    btn.title = "Veritas · Fact check this post";
-    btn.innerHTML = buildFactCheckLogoSvg(gid);
-
-    const panel = document.createElement("div");
-    panel.className = "veritas-fc-popover";
-
-    btn.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      const wasOpen = panel.classList.contains("veritas-fc-popover--open");
-      document.querySelectorAll(".veritas-fc-popover.veritas-fc-popover--open").forEach((p) => {
-        if (p !== panel) p.classList.remove("veritas-fc-popover--open");
-      });
-      if (wasOpen) {
-        panel.classList.remove("veritas-fc-popover--open");
-        return;
-      }
-      panel.classList.add("veritas-fc-popover--open");
-      delete panel.dataset.veritasFactCheckDismissed;
-      panel.textContent = "";
-      panel.appendChild(buildFactCheckTopBar(panel));
-      const loadingEl = document.createElement("div");
-      loadingEl.className = "veritas-factcheck-loading";
-      loadingEl.textContent = "Analyzing post (satire vs fact vs opinion)…";
-      panel.appendChild(loadingEl);
-      btn.disabled = true;
-      try {
-        const text = extractArticleTextFromPost(articleEl);
-        if (text.length < 40) {
-          if (panel.dataset.veritasFactCheckDismissed === "1") return;
-          panel.textContent = "";
-          panel.appendChild(buildFactCheckTopBar(panel));
-          const err = document.createElement("div");
-          err.className = "veritas-factcheck-err";
-          err.textContent = "Not enough text in this post (need at least ~40 characters).";
-          panel.appendChild(err);
-          return;
-        }
-        const data = await factCheckClient({
-          text,
-          url: typeof location !== "undefined" ? location.href : "",
-          title: typeof document !== "undefined" ? document.title : "",
-        });
-        if (panel.dataset.veritasFactCheckDismissed === "1") return;
-        renderFactCheckResult(panel, data);
-      } catch (e) {
-        if (panel.dataset.veritasFactCheckDismissed === "1") return;
-        panel.textContent = "";
-        panel.appendChild(buildFactCheckTopBar(panel));
-        const err = document.createElement("div");
-        err.className = "veritas-factcheck-err";
-        err.textContent = escapeHtml(String(e?.message || e));
-        panel.appendChild(err);
-      } finally {
-        btn.disabled = false;
-      }
-    });
-
-    anchor.appendChild(btn);
-    anchor.appendChild(panel);
-    articleEl.appendChild(anchor);
+    // Fact-check post button removed everywhere — strip any leftover UI.
+    if (!articleEl) return;
+    articleEl
+      .querySelectorAll(
+        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor, .veritas-fc-popover, .veritas-fc-logo-btn"
+      )
+      .forEach((n) => n.remove());
   }
 
   function escapeHtml(s) {
@@ -3680,14 +3636,9 @@
       el.querySelectorAll(".veritas-check-ai-row, .veritas-check-ai-panel").forEach((n) => n.remove());
     }
 
-    /** X: mount AI tick beside fact-check logo (same anchor) so they never overlap */
+    /** X: AI tick on the post toolbar (fact-check logo removed). */
     let xOriginContainer = host;
     if (isX) {
-      const fcAnchor = el.querySelector("[data-veritas-fc-wrap]");
-      if (fcAnchor) {
-        fcAnchor.classList.add("veritas-fc-anchor--x-actions");
-        xOriginContainer = fcAnchor;
-      }
       mountXTextOriginRow(xOriginContainer);
     }
 
@@ -3711,6 +3662,12 @@
 
   function scanFeed() {
     injectStyleOnce();
+    // Remove fact-check post button everywhere (legacy injections).
+    document
+      .querySelectorAll(
+        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor, .veritas-fc-popover, .veritas-fc-logo-btn"
+      )
+      .forEach((n) => n.remove());
     if (isLinkedIn) {
       // Strip leftover Check AI controls from LinkedIn (notifications / feed).
       document
@@ -4138,24 +4095,119 @@
 
   const obs = new MutationObserver(() => {
     window.clearTimeout(scanFeed._t);
+    const delay = isLinkedIn && getLinkedInProfileVanityFromPath() ? 180 : 650;
     scanFeed._t = window.setTimeout(() => {
       runSocialAccountScanners();
       scanFeed();
-    }, 650);
+    }, delay);
   });
 
   obs.observe(document.documentElement, { childList: true, subtree: true });
 
-  // LinkedIn profile/feed SPA: name heading often mounts after first paint.
+  // LinkedIn is an SPA: clicking a profile does NOT reload the extension.
+  // One-shot timeouts at boot never run again — so poll hard on every /in/ navigation.
   if (isLinkedIn) {
-    [200, 600, 1200, 2500, 4500, 8000].forEach((ms) => {
-      window.setTimeout(() => {
+    let liBurstTimer = null;
+    let liLastPath = "";
+
+    function clearLinkedInProfileBurst() {
+      if (liBurstTimer) {
+        window.clearInterval(liBurstTimer);
+        liBurstTimer = null;
+      }
+    }
+
+    function linkedinProfileBadgePresent(profileKey) {
+      if (!profileKey) return false;
+      const nameEl = findLinkedInProfileNameNode();
+      const badge = document.querySelector(
+        `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`
+      );
+      if (!badge || !badge.isConnected) return false;
+      if (!nameEl) return true; // badge exists; name node may still be mounting
+      return (
+        nameEl.nextElementSibling === badge ||
+        badge.previousElementSibling === nameEl ||
+        (nameEl.parentElement && badge.parentElement === nameEl.parentElement)
+      );
+    }
+
+    function kickLinkedInProfileScoreBurst() {
+      const profileKey = getLinkedInProfileVanityFromPath();
+      if (!profileKey) {
+        clearLinkedInProfileBurst();
+        return;
+      }
+      clearLinkedInProfileBurst();
+      let tries = 0;
+      const tick = () => {
+        tries += 1;
         try {
           scanLinkedInAccountBadges();
         } catch {
           /* ignore */
         }
-      }, ms);
-    });
+        if (linkedinProfileBadgePresent(profileKey) || tries >= 80) {
+          clearLinkedInProfileBurst();
+        }
+      };
+      tick();
+      liBurstTimer = window.setInterval(tick, 120);
+    }
+
+    function onLinkedInPathMaybeChanged() {
+      const path = location.pathname || "";
+      if (path === liLastPath) return;
+      liLastPath = path;
+      const parts = path.split("/").filter(Boolean);
+      if (parts[0] === "in" && parts[1]) {
+        // Fresh profile visit: drop stale owner badges so we re-pin next to the new H1.
+        document.querySelectorAll(".veritas-account-badge--linkedin").forEach((b) => {
+          const k = b.getAttribute("data-veritas-score-key") || "";
+          if (k.startsWith("li:")) b.remove();
+        });
+        document.querySelectorAll(`[${SOCIAL_TAG}="1"]`).forEach((el) => {
+          el.removeAttribute(SOCIAL_TAG);
+        });
+        kickLinkedInProfileScoreBurst();
+      } else {
+        clearLinkedInProfileBurst();
+      }
+    }
+
+    try {
+      const _push = history.pushState.bind(history);
+      const _replace = history.replaceState.bind(history);
+      history.pushState = function (...args) {
+        const ret = _push(...args);
+        onLinkedInPathMaybeChanged();
+        return ret;
+      };
+      history.replaceState = function (...args) {
+        const ret = _replace(...args);
+        onLinkedInPathMaybeChanged();
+        return ret;
+      };
+    } catch {
+      /* ignore */
+    }
+    window.addEventListener("popstate", onLinkedInPathMaybeChanged);
+    window.setInterval(onLinkedInPathMaybeChanged, 400);
+    // Keepalive: LinkedIn often remounts the header after first paint / soft nav.
+    window.setInterval(() => {
+      const pk = getLinkedInProfileVanityFromPath();
+      if (!pk) return;
+      if (!linkedinProfileBadgePresent(pk)) {
+        try {
+          scanLinkedInAccountBadges();
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 800);
+
+    liLastPath = "";
+    onLinkedInPathMaybeChanged();
+    kickLinkedInProfileScoreBurst();
   }
 })();
