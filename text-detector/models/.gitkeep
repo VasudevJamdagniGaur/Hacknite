@@ -1,0 +1,2 @@
+# Hugging Face caches weights under ~/.cache/huggingface by default.
+# This folder is reserved for optional local model snapshots.

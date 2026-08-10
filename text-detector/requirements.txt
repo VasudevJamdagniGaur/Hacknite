@@ -1,0 +1,13 @@
+# Veritas local AI-text detector (ADAL)
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# PyTorch — install a CUDA wheel that matches your GPU if available, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+
+# Hugging Face
+transformers>=4.38.0
+safetensors>=0.4.0
+huggingface_hub>=0.21.0
