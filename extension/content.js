@@ -1248,12 +1248,41 @@
 
   const accountScoreCache = new Map();
 
+  /** Fixed authenticity scores for partner / demo Instagram accounts (everywhere on IG). */
+  const PINNED_ACCOUNT_SCORES = {
+    geekroom__: 100,
+    "talk.with.adarsh": 92,
+    namanbansal013: 94,
+  };
+
+  function normalizeScoreHandle(scoreKey) {
+    return String(scoreKey || "")
+      .trim()
+      .replace(/^@+/, "")
+      .toLowerCase();
+  }
+
+  function pinnedAccountScore(scoreKey) {
+    const k = normalizeScoreHandle(scoreKey);
+    return Object.prototype.hasOwnProperty.call(PINNED_ACCOUNT_SCORES, k)
+      ? PINNED_ACCOUNT_SCORES[k]
+      : null;
+  }
+
   /** Same algorithm as backend `mockRealness` — used when API is blocked (HTTPS → HTTP localhost). */
   function localMockRealness(handle) {
+    const pinned = pinnedAccountScore(handle);
+    if (pinned != null) return pinned;
     let h = 0;
     const s = String(handle);
     for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
     return Math.abs(h) % 101;
+  }
+
+  function resolveDisplayedAccountScore(scoreKey, rawScore, anchor) {
+    const pinned = pinnedAccountScore(scoreKey);
+    if (pinned != null) return { score: pinned, boosted: false, pinned: true };
+    return { ...applyVerifiedAccountBonus(rawScore, anchor), pinned: false };
   }
 
   /**
@@ -1262,15 +1291,15 @@
    * On plain http pages (e.g. mock feed), direct fetch still works as a fallback.
    */
   async function fetchAccountScore(scoreKey) {
-    /** Demo / partner profile: always show max authenticity on Instagram. */
-    if (typeof scoreKey === "string" && scoreKey.toLowerCase() === "geekroom__") {
-      const pinned = Promise.resolve({
-        realnessScore: 100,
+    const pinned = pinnedAccountScore(scoreKey);
+    if (pinned != null) {
+      const p = Promise.resolve({
+        realnessScore: pinned,
         source: "veritas-override",
         bot_probability: 0,
       });
-      accountScoreCache.set(scoreKey, pinned);
-      return pinned;
+      accountScoreCache.set(scoreKey, p);
+      return p;
     }
 
     if (accountScoreCache.has(scoreKey)) return accountScoreCache.get(scoreKey);
@@ -1595,7 +1624,7 @@
     if (extraBadgeClass === "veritas-account-badge--linkedin") {
       try {
         const raw = localMockRealness(scoreKey);
-        const { score, boosted } = applyVerifiedAccountBonus(raw, anchor);
+        const { score, boosted } = resolveDisplayedAccountScore(scoreKey, raw, anchor);
         badge.textContent = String(score);
         badge.setAttribute("data-veritas-display-score", String(score));
         badge.classList.remove("veritas-ig-realness--loading");
@@ -1611,7 +1640,7 @@
     fetchAccountScore(scoreKey)
       .then((data) => {
         const raw = clamp(Math.round(Number(data.realnessScore) || 0), 0, 100);
-        const { score, boosted } = applyVerifiedAccountBonus(raw, anchor);
+        const { score, boosted } = resolveDisplayedAccountScore(scoreKey, raw, anchor);
         const botPct =
           typeof data.bot_probability === "number"
             ? clamp(Math.round(data.bot_probability * 100), 0, 100)
@@ -1625,7 +1654,7 @@
       })
       .catch(() => {
         const raw = localMockRealness(scoreKey);
-        const { score, boosted } = applyVerifiedAccountBonus(raw, anchor);
+        const { score, boosted } = resolveDisplayedAccountScore(scoreKey, raw, anchor);
         badge.textContent = String(score);
         badge.setAttribute("data-veritas-display-score", String(score));
         badge.classList.remove("veritas-ig-realness--loading");
@@ -1904,44 +1933,41 @@
     injectStyleOnce();
 
     const profileKey = getLinkedInProfileVanityFromPath();
-    let profilePinned = false;
     if (profileKey) {
-      profilePinned = ensureLinkedInProfileNameScore(profileKey);
+      ensureLinkedInProfileNameScore(profileKey);
     }
 
+    // "Name reposted this" rows (not covered by plain /in/ name links alone).
+    scanLinkedInRepostHeaderBadges(profileKey);
+
+    // 0.1.3-style: badge every visible profile name link — feed, sidebar, search, etc.
     const anchors = Array.from(
       document.querySelectorAll('a[href*="/in/"], a[href*="linkedin.com/in/"]')
     );
     const slotSeen = new Set();
-    // Only reserve the profile vanity after a badge is actually next to the name.
-    // (Earlier we always reserved it → failed H1 attach = zero score on profile pages.)
-    const takenKeys = new Set();
-    if (profilePinned && profileKey) takenKeys.add(profileKey.toLowerCase());
 
     for (const a of anchors) {
       if (a.getAttribute(SOCIAL_TAG) === "1") continue;
       const scoreKey = linkedinVanityFromHref(a.getAttribute("href") || "");
       if (!scoreKey) continue;
-      if (takenKeys.has(scoreKey.toLowerCase())) {
-        a.setAttribute(SOCIAL_TAG, "1");
-        continue;
-      }
-      // On /in/ pages, never attach the profile owner via feed lockups (headline trap).
-      if (profileKey && scoreKey.toLowerCase() === profileKey.toLowerCase()) {
-        a.setAttribute(SOCIAL_TAG, "1");
-        continue;
-      }
-      if (isLikelyGenericAvatarLink(a)) continue;
-      if (a.closest("aside, footer, nav, [role='navigation'], .scaffold-layout__aside")) {
-        a.setAttribute(SOCIAL_TAG, "1");
-        continue;
-      }
-      if (a.closest(".global-nav, header.global-nav__content, .msg-overlay-list-bubble")) {
+
+      // Top chrome / messaging only — do NOT skip aside / "More profiles for you".
+      if (a.closest(".global-nav, header.global-nav__content, .msg-overlay-list-bubble, footer")) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
 
-      const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+      // Allow the profile owner elsewhere too (Open to work / lockups) like 0.1.3.
+      // H1 is still pinned separately via ensureLinkedInProfileNameScore.
+
+      if (isLinkedInRepostHeaderContext(a)) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+
+      if (isLikelyGenericAvatarLink(a)) continue;
+
+      const text = linkedInAnchorDisplayName(a.textContent || "");
       if (!text || text.length < 2) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
@@ -1950,43 +1976,180 @@
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
-      if (isLinkedInHeadlineLike(text)) {
-        a.setAttribute(SOCIAL_TAG, "1");
-        continue;
-      }
 
       const r = a.getBoundingClientRect();
       if (r.width < 2 && r.height < 2) continue;
-      if (r.left > window.innerWidth * 0.72) {
-        a.setAttribute(SOCIAL_TAG, "1");
-        continue;
-      }
 
-      const slot = `${scoreKey}@${Math.round(r.top / 200)}`;
+      // Same slotting as 0.1.3 — allows multiple people + sidebar columns.
+      const slot = `${scoreKey}@${Math.round(r.top / 280)}_${Math.round(r.left / 200)}`;
       if (slotSeen.has(slot)) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
+
+      // Only skip if THIS local row/card already has the badge (never page-wide).
+      const near =
+        a.closest(
+          ".artdeco-entity-lockup, .entity-result, .reusable-search__result-container, li.artdeco-list__item, .feed-shared-update-v2, .occludable-update, [data-urn*='activity'], [data-id*='activity']"
+        ) || a.parentElement;
       if (
-        document.querySelector(
+        near &&
+        near.querySelector(
           `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(scoreKey)}"]`
         )
       ) {
         a.setAttribute(SOCIAL_TAG, "1");
-        takenKeys.add(scoreKey.toLowerCase());
         continue;
       }
 
       slotSeen.add(slot);
-      takenKeys.add(scoreKey.toLowerCase());
       a.setAttribute(SOCIAL_TAG, "1");
       const nameTarget = resolveLinkedInFeedNameTarget(a);
       attachAccountScoreBadge(nameTarget, scoreKey, false, "veritas-account-badge--linkedin");
     }
 
+    // Never strip sidebar / aside scores (0.1.3 showed them).
     document.querySelectorAll(".veritas-account-badge--linkedin").forEach((b) => {
-      if (b.closest("aside, nav, footer, .scaffold-layout__aside, .global-nav")) b.remove();
+      if (b.closest(".global-nav, header.global-nav__content, footer")) b.remove();
     });
+  }
+
+  function linkedInFeedCardRoot(el) {
+    if (!(el instanceof Element)) return null;
+    return (
+      el.closest(
+        ".feed-shared-update-v2, .occludable-update, [data-urn*='activity'], [data-id*='activity'], [data-urn*='aggregate'], article"
+      ) || null
+    );
+  }
+
+  function cardHasLinkedInBadge(card, scoreKey) {
+    const root = card || document;
+    return !!root.querySelector(
+      `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(scoreKey)}"]`
+    );
+  }
+
+  function linkedInAnchorDisplayName(raw) {
+    return String(raw || "")
+      .replace(/\s+/g, " ")
+      .replace(/\breposted this\b/gi, "")
+      .replace(/\breposted a .*?\b/gi, "")
+      .trim();
+  }
+
+  function isLinkedInRepostHeaderContext(el) {
+    if (!(el instanceof Element)) return false;
+    const header =
+      el.closest(
+        ".update-components-header, .feed-shared-header, .update-components-header__text-wrapper"
+      ) || null;
+    const scope = header || el.parentElement;
+    if (!scope) return false;
+    const t = (scope.textContent || "").replace(/\s+/g, " ");
+    return /\breposted this\b/i.test(t) || /\breposted\b/i.test(t);
+  }
+
+  /**
+   * "Name reposted this" row — separate from the original author actor lockup.
+   */
+  function scanLinkedInRepostHeaderBadges(profileKey) {
+    const headers = new Set();
+
+    document
+      .querySelectorAll(
+        ".update-components-header, .feed-shared-header, .update-components-header__text-wrapper"
+      )
+      .forEach((el) => {
+        const t = (el.textContent || "").replace(/\s+/g, " ");
+        if (/\breposted this\b/i.test(t) || /\breposted\b/i.test(t)) headers.add(el);
+      });
+
+    // Fallback: any compact node that literally contains "reposted this".
+    document.querySelectorAll("span, div, p").forEach((el) => {
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/\breposted this\b/i.test(t)) return;
+      if (t.length > 140) return;
+      const header =
+        el.closest(
+          ".update-components-header, .feed-shared-header, .update-components-header__text-wrapper"
+        ) || el;
+      headers.add(header);
+    });
+
+    for (const header of headers) {
+      if (!(header instanceof HTMLElement)) continue;
+      if (header.getAttribute("data-veritas-li-repost") === "1") {
+        if (header.querySelector(".veritas-account-badge--linkedin")) continue;
+        header.removeAttribute("data-veritas-li-repost");
+      }
+
+      const links = Array.from(
+        header.querySelectorAll('a[href*="/in/"], a[href*="linkedin.com/in/"]')
+      );
+      let nameLink = null;
+      for (const a of links) {
+        if (isLikelyGenericAvatarLink(a)) continue;
+        const name = linkedInAnchorDisplayName(a.textContent || "");
+        if (!name || name.length < 2) continue;
+        if (isLinkedInHeadlineLike(name)) continue;
+        nameLink = a;
+        break;
+      }
+      // Avatar-only header: still resolve vanity from the first profile link.
+      if (!nameLink) {
+        const any = links.find((a) => linkedinVanityFromHref(a.getAttribute("href") || ""));
+        if (!any) continue;
+        nameLink = any;
+      }
+
+      const scoreKey = linkedinVanityFromHref(nameLink.getAttribute("href") || "");
+      if (!scoreKey) continue;
+      if (profileKey && scoreKey.toLowerCase() === profileKey.toLowerCase()) {
+        header.setAttribute("data-veritas-li-repost", "1");
+        continue;
+      }
+
+      const card = linkedInFeedCardRoot(header);
+      if (cardHasLinkedInBadge(header, scoreKey) || cardHasLinkedInBadge(card, scoreKey)) {
+        // Prefer a badge inside this header; if only on the author row below, still add here.
+        if (header.querySelector(`.veritas-ig-realness[data-veritas-score-key="${CSS.escape(scoreKey)}"]`)) {
+          header.setAttribute("data-veritas-li-repost", "1");
+          continue;
+        }
+      }
+      if (header.querySelector(".veritas-account-badge--linkedin")) {
+        header.setAttribute("data-veritas-li-repost", "1");
+        continue;
+      }
+
+      links.forEach((a) => a.setAttribute(SOCIAL_TAG, "1"));
+      header.setAttribute("data-veritas-li-repost", "1");
+
+      // Place after the name link (before "reposted this"), not after the whole header.
+      const placeOn =
+        !isLikelyGenericAvatarLink(nameLink) && linkedInAnchorDisplayName(nameLink.textContent || "")
+          ? nameLink
+          : findLinkedInRepostNameNode(header, nameLink) || nameLink;
+      attachAccountScoreBadge(placeOn, scoreKey, false, "veritas-account-badge--linkedin");
+    }
+  }
+
+  function findLinkedInRepostNameNode(header, fallbackLink) {
+    const spans = Array.from(header.querySelectorAll("span[aria-hidden='true'], span, strong, a"));
+    for (const el of spans) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (el.querySelector("img")) continue;
+      const t = linkedInAnchorDisplayName(el.textContent || "");
+      if (!t || t.length < 2 || t.length > 60) continue;
+      if (/\breposted\b/i.test(el.textContent || "") && t.split(/\s+/).length > 4) continue;
+      if (isLinkedInHeadlineLike(t)) continue;
+      const words = t.split(/\s+/).filter(Boolean);
+      if (words.length < 1 || words.length > 6) continue;
+      // Prefer the visible name sitting before "reposted this".
+      return el;
+    }
+    return fallbackLink;
   }
 
   function isLinkedInHeadlineLike(text) {
@@ -2045,47 +2208,24 @@
     if (!nameEl) return false;
 
     const sel = `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`;
-    const badges = Array.from(document.querySelectorAll(sel));
+    const nearName =
+      (nameEl.nextElementSibling &&
+        nameEl.nextElementSibling.classList?.contains("veritas-account-badge--linkedin") &&
+        nameEl.nextElementSibling.getAttribute("data-veritas-score-key") === profileKey &&
+        nameEl.nextElementSibling) ||
+      (nameEl.parentElement &&
+        Array.from(nameEl.parentElement.children).find(
+          (c) =>
+            c.classList?.contains("veritas-account-badge--linkedin") &&
+            c.getAttribute("data-veritas-score-key") === profileKey
+        )) ||
+      null;
 
-    const isCorrectPlacement = (b) => {
-      if (!b || !b.isConnected) return false;
-      // Directly after the name, or sharing the same parent row as the name.
-      if (nameEl.nextElementSibling === b) return true;
-      if (b.previousElementSibling === nameEl) return true;
-      if (nameEl.parentElement && b.parentElement === nameEl.parentElement) {
-        // Same row as name — not down in the headline block.
-        const headline = nameEl.parentElement.parentElement?.querySelector?.(
-          ".text-body-medium, .pv-text-details__left-panel .text-body-medium"
-        );
-        if (headline && (headline.contains(b) || b.compareDocumentPosition(headline) & Node.DOCUMENT_POSITION_CONTAINED_BY)) {
-          return false;
-        }
-        return true;
-      }
-      return false;
-    };
+    if (nearName && nearName.isConnected) return true;
 
-    let correctBadge = badges.find(isCorrectPlacement) || null;
-
-    for (const b of badges) {
-      if (b === correctBadge) continue;
-      const wrap = b.closest("[data-veritas-li-name-wrap='1']");
-      b.remove();
-      if (wrap && wrap.getAttribute("data-veritas-li-profile-name") === "1") {
-        // Unwrap legacy wraps that moved the H1 (breaks React).
-        while (wrap.firstChild) wrap.parentNode?.insertBefore(wrap.firstChild, wrap);
-        wrap.remove();
-      } else if (wrap && !wrap.querySelector("h1, .veritas-ig-realness")) {
-        while (wrap.firstChild) wrap.parentNode?.insertBefore(wrap.firstChild, wrap);
-        wrap.remove();
-      }
-    }
-
-    if (correctBadge && correctBadge.isConnected) return true;
-
+    // Do not delete other badges for this key (0.1.3 showed multiple: name + Open to work, etc.).
     attachAccountScoreBadge(nameEl, profileKey, false, "veritas-account-badge--linkedin");
-    const after = document.querySelector(sel);
-    return !!(after && isCorrectPlacement(after));
+    return !!document.querySelector(sel);
   }
 
   function getLinkedInProfileVanityFromPath() {
@@ -2187,17 +2327,14 @@
     badge.style.marginRight = "4px";
     badge.style.verticalAlign = "middle";
 
-    // Profile name: DO NOT wrap/move the node — LinkedIn React remounts and deletes the badge.
-    const isProfileName =
+    // Profile H1: insert after name — never wrap/move (LinkedIn React remounts).
+    if (
       nameEl.tagName === "H1" ||
       nameEl.getAttribute("data-anonymize") === "person-name" ||
-      (nameEl.classList?.contains("text-heading-xlarge") &&
-        !!getLinkedInProfileVanityFromPath());
-
-    if (isProfileName) {
+      (nameEl.classList?.contains("text-heading-xlarge") && !!getLinkedInProfileVanityFromPath())
+    ) {
       const parent = nameEl.parentElement;
       if (parent) {
-        // Keep name + score on one row without relocating React-owned nodes.
         const disp = window.getComputedStyle(parent).display;
         if (disp === "block" || disp === "list-item") {
           parent.style.setProperty("display", "flex", "important");
@@ -2208,62 +2345,50 @@
         }
         parent.setAttribute("data-veritas-li-profile-name", "1");
       }
-      if (nameEl.nextElementSibling === badge) return;
-      nameEl.insertAdjacentElement("afterend", badge);
+      if (nameEl.nextElementSibling !== badge) nameEl.insertAdjacentElement("afterend", badge);
       return;
     }
 
-    // Feed: stay on a small title node — do NOT closest() to a giant /in/ ancestor.
-    let target =
-      nameEl.closest?.(
-        ".update-components-actor__title, .update-components-actor__name, .feed-shared-actor__name, .artdeco-entity-lockup__title"
-      ) || nameEl;
-
-    if (target !== nameEl && isLinkedInHeadlineLike(target.textContent || "")) {
-      target = nameEl;
-    }
-
-    const existingWrap = target.closest?.("[data-veritas-li-name-wrap='1']");
-    if (existingWrap) {
-      if (!existingWrap.querySelector(".veritas-account-badge--linkedin")) {
-        existingWrap.appendChild(badge);
-      }
-      return;
-    }
-
-    const wrap = document.createElement("span");
-    wrap.setAttribute("data-veritas-li-name-wrap", "1");
-    wrap.style.cssText =
-      "display:inline-flex!important;align-items:center!important;flex-wrap:nowrap!important;gap:8px!important;vertical-align:middle;max-width:100%;position:static!important;";
-    target.parentNode.insertBefore(wrap, target);
-    wrap.appendChild(target);
-    wrap.appendChild(badge);
+    // Repost header + everything else (feed / sidebar): 0.1.3 behavior — afterend.
+    if (nameEl.nextElementSibling !== badge) nameEl.insertAdjacentElement("afterend", badge);
   }
 
   function resolveLinkedInFeedNameTarget(anchor) {
     if (!(anchor instanceof HTMLElement)) return anchor;
+
+    // Sidebar / entity lockup title (More profiles for you).
+    const lockupTitle =
+      anchor.querySelector?.(
+        ".artdeco-entity-lockup__title, .entity-result__title-text, .artdeco-entity-lockup__title span[aria-hidden='true']"
+      ) ||
+      anchor.closest?.(".artdeco-entity-lockup__title, .entity-result__title-text");
+    if (lockupTitle && linkedInAnchorDisplayName(lockupTitle.textContent || "").length >= 2) {
+      return lockupTitle;
+    }
+
     const title =
       anchor.closest(".update-components-actor__title") ||
       anchor.closest(".update-components-actor__name") ||
       anchor.closest(".feed-shared-actor__name") ||
       anchor.closest(".artdeco-entity-lockup__title");
-    if (title && !isLinkedInHeadlineLike(title.textContent || "")) return title;
-    // Prefer the smallest profile link — never a giant lockup that includes the headline.
-    let best = anchor;
-    let bestLen = (anchor.textContent || "").length;
-    let n = anchor;
-    for (let i = 0; i < 6 && n; i++) {
-      const link = n.closest?.("a[href*='/in/']");
-      if (!link || link === n) break;
-      const t = (link.textContent || "").replace(/\s+/g, " ").trim();
-      if (isLinkedInHeadlineLike(t)) break;
-      if (t.length < bestLen || best === anchor) {
-        best = link;
-        bestLen = t.length;
-      }
-      n = link.parentElement;
+    if (title) {
+      const nt = linkedInAnchorDisplayName(title.textContent || "");
+      if (nt && !isLinkedInHeadlineLike(nt)) return title;
     }
-    return best;
+
+    // If the <a> mixes name + headline, prefer the first short visible name span.
+    const full = linkedInAnchorDisplayName(anchor.textContent || "");
+    if (full.length > 48 || /[|]/.test(full)) {
+      for (const el of anchor.querySelectorAll("span[aria-hidden='true'], span, strong")) {
+        if (!(el instanceof HTMLElement) || el.querySelector("img")) continue;
+        const t = linkedInAnchorDisplayName(el.textContent || "");
+        if (t.length >= 2 && t.length <= 48 && !/[|]/.test(t) && t.split(/\s+/).length <= 6) {
+          return el;
+        }
+      }
+    }
+
+    return anchor;
   }
 
   function scanRedditAccountBadges() {
