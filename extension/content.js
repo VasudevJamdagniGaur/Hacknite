@@ -1093,7 +1093,7 @@
     return display || anchor;
   }
 
-  /** Blue verified tick near the display name (insert score just before this). */
+  /** Blue verified tick near the display name. */
   function findXVerifiedTickNear(displayLink) {
     const root =
       displayLink.closest('[data-testid="User-Name"], [data-testid="UserName"], [data-testid="User-Names"]') ||
@@ -1115,23 +1115,60 @@
     return node;
   }
 
+  /** Shared flex/inline row that holds display name + blue tick. */
+  function findXNameTickRow(displayLink, tick) {
+    if (!displayLink) return null;
+    if (tick) {
+      let a = displayLink.parentElement;
+      while (a) {
+        if (a.contains(tick) && a !== tick) {
+          const style = window.getComputedStyle(a);
+          const dir = style.flexDirection || "";
+          // Prefer a horizontal row, not the column that stacks name above @handle.
+          if (style.display.includes("flex") && dir.startsWith("column")) {
+            a = a.parentElement;
+            continue;
+          }
+          return a;
+        }
+        a = a.parentElement;
+      }
+    }
+    return displayLink.parentElement;
+  }
+
   /**
-   * Place X score between display name and blue tick:
-   *   Silly Point  [100]  ✓  ·  @handle
+   * Place X score on the same line as the name — after the blue tick when present:
+   *   daksh.  ✓  [61]  @handle
+   * Falls back to after the display name (still inline), never a new row below.
    */
   function placeXScoreBetweenNameAndTick(badge, anchor) {
     const displayLink = findXDisplayNameLink(anchor);
     const tick = findXVerifiedTickNear(displayLink);
+    const row = findXNameTickRow(displayLink, tick);
+
     badge.classList.add("veritas-ig-realness--next-to-handle");
+    badge.style.display = "inline-flex";
+    badge.style.flexShrink = "0";
+    badge.style.alignSelf = "center";
+    badge.style.verticalAlign = "middle";
     badge.style.marginLeft = "4px";
     badge.style.marginRight = "4px";
-    if (tick && tick.parentNode && !displayLink.contains(tick)) {
-      tick.parentNode.insertBefore(badge, tick);
-    } else if (displayLink.parentNode) {
-      displayLink.insertAdjacentElement("afterend", badge);
-    } else {
-      anchor.insertAdjacentElement("afterend", badge);
+
+    if (tick && tick.parentNode) {
+      // After blue tick, same row.
+      if (tick.nextSibling) tick.parentNode.insertBefore(badge, tick.nextSibling);
+      else tick.parentNode.appendChild(badge);
+      return displayLink;
     }
+
+    if (row && displayLink.parentNode === row) {
+      if (displayLink.nextSibling) row.insertBefore(badge, displayLink.nextSibling);
+      else row.appendChild(badge);
+      return displayLink;
+    }
+
+    displayLink.insertAdjacentElement("afterend", badge);
     return displayLink;
   }
 
@@ -1513,7 +1550,7 @@
       badge.style.marginLeft = "6px";
       badge.style.marginRight = "0";
     } else if (extraBadgeClass === "veritas-account-badge--x") {
-      // X: between display name and blue tick (not above the name).
+      // X: same line as name, after blue tick (not below the name).
       placeXScoreBetweenNameAndTick(badge, anchor);
     } else if (insertBadgeBeforeAnchor) {
       anchor.insertAdjacentElement("beforebegin", badge);
