@@ -7,6 +7,10 @@
  */
 const VERITAS_API_BASE = "http://localhost:5000/api";
 const VERITAS_DETECT_URL = "http://127.0.0.1:8000/detect";
+/** Socitea Gemini vision backend (see GET /health). */
+const SOCITEA_BASE_URL = "https://socitea.onrender.com";
+const SOCITEA_CHAT_URL = `${SOCITEA_BASE_URL}/chat`;
+const SOCITEA_HEALTH_URL = `${SOCITEA_BASE_URL}/health`;
 
 function hashHandle(handle) {
   let h = 0;
@@ -180,6 +184,177 @@ function checkAiViaApi(payload) {
   };
 
   return run();
+}
+
+function stripDataUrlBase64(raw) {
+  const s = String(raw || "").trim();
+  const m = s.match(/^data:image\/[a-z0-9+.-]+;base64,(.+)$/i);
+  return m ? m[1] : s;
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function base64ImageToDownscaledJpegBase64(input, maxSide = 720) {
+  const raw = stripDataUrlBase64(input);
+  if (!raw || raw.length < 32) throw new Error("Empty image data");
+  const bin = atob(raw);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: "image/jpeg" });
+  return blobToDownscaledJpegBase64(blob, maxSide);
+}
+
+async function wakeSocitea() {
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 60000);
+    await fetch(SOCITEA_HEALTH_URL, { method: "GET", cache: "no-store", signal: ctrl.signal });
+    clearTimeout(tid);
+  } catch {
+    /* ignore — Render may still be cold */
+  }
+}
+
+/** POST /chat via fetch; if fetch throws, fall back to XHR (fixes some SW Failed to fetch cases). */
+function postJsonSociteaChat(bodyJson) {
+  const tryFetch = async () => {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 90000);
+    try {
+      const resp = await fetch(SOCITEA_CHAT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: bodyJson,
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
+      const text = await resp.text();
+      return { status: resp.status, ok: resp.ok, text };
+    } finally {
+      clearTimeout(tid);
+    }
+  };
+
+  const tryXhr = () =>
+    new Promise((resolve, reject) => {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", SOCITEA_CHAT_URL, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Accept", "application/json");
+        xhr.timeout = 90000;
+        xhr.onload = () => {
+          resolve({
+            status: xhr.status,
+            ok: xhr.status >= 200 && xhr.status < 300,
+            text: String(xhr.responseText || ""),
+          });
+        };
+        xhr.onerror = () =>
+          reject(
+            new Error(
+              `Could not reach ${SOCITEA_CHAT_URL} (XHR network error). Socitea may be waking up — wait 20s and retry.`
+            )
+          );
+        xhr.ontimeout = () => reject(new Error(`Timed out contacting ${SOCITEA_CHAT_URL}`));
+        xhr.send(bodyJson);
+      } catch (e) {
+        reject(e);
+      }
+    });
+
+  return tryFetch().catch(async (fetchErr) => {
+    try {
+      return await tryXhr();
+    } catch (xhrErr) {
+      const msg = String(fetchErr?.message || fetchErr || "Failed to fetch");
+      throw new Error(
+        `Could not reach ${SOCITEA_CHAT_URL} (${msg}). Wait ~20s if the service is cold, then press Check AI again.`
+      );
+    }
+  });
+}
+
+function parseScore0to100(replyText) {
+  const text = String(replyText || "").trim();
+  if (!text) throw new Error("Empty Socitea reply");
+
+  // Prefer explicit JSON if model returns it.
+  try {
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const raw = fence ? fence[1].trim() : text;
+    const obj = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+    const n = Math.round(Number(obj.aiProbability ?? obj.score ?? obj.value));
+    if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
+  } catch {
+    /* fall through to plain number */
+  }
+
+  const m = text.match(/\b(100|[1-9]?\d)\b/);
+  if (!m) throw new Error(`Socitea reply was not a 0-100 score: ${text.slice(0, 120)}`);
+  return Math.max(0, Math.min(100, parseInt(m[1], 10)));
+}
+
+/**
+ * Reel snap → Socitea /chat → integer score 0 (Real) … 100 (AI).
+ * @param {{ imageBase64: string }} payload
+ */
+function scoreReelImageViaSocitea(payload) {
+  return (async () => {
+    if (!payload?.imageBase64) throw new Error("Missing reel snap image");
+
+    const imageBase64 = await base64ImageToDownscaledJpegBase64(payload.imageBase64, 720);
+    const message =
+      "Look at this social-video frame. Reply with ONLY one integer from 0 to 100. " +
+      "0 = fully real camera footage. 100 = fully AI-generated. " +
+      "No words, no punctuation, no JSON — only the number.";
+
+    const bodyJson = JSON.stringify({
+      message,
+      imageBase64,
+      mimeType: "image/jpeg",
+    });
+
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await wakeSocitea();
+        if (attempt > 1) await sleepMs(2000 * attempt);
+
+        const { ok, status, text } = await postJsonSociteaChat(bodyJson);
+        let data;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error(`Socitea returned non-JSON (HTTP ${status})`);
+        }
+        if (!ok) {
+          throw new Error(
+            (data && (data.error || data.details)) || `Socitea HTTP ${status}`
+          );
+        }
+        const score = parseScore0to100(data?.reply);
+        return {
+          aiProbability: score,
+          score,
+          verdict: score >= 50 ? "AI-generated" : "Authentic",
+          explanation: String(score),
+          reply: String(data?.reply || score),
+          source: "socitea",
+        };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw new Error(String(lastErr?.message || lastErr || "Socitea request failed"));
+  })();
+}
+
+/** @deprecated name kept for older message handlers */
+function checkAiViaSocitea(payload) {
+  return scoreReelImageViaSocitea(payload);
 }
 
 function amazonInlineScoresViaApi(reviews) {
@@ -434,6 +609,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       imageBase64: msg.imageBase64,
       imageUrl: msg.imageUrl,
     })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (t === "VERITAS_CHECK_AI_SOCITEA" && (msg.imageBase64 || msg.imageUrl)) {
+    scoreReelImageViaSocitea({
+      imageBase64: msg.imageBase64,
+      imageUrl: msg.imageUrl,
+    })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (t === "VERITAS_REEL_AI_SCORE" && msg.imageBase64) {
+    scoreReelImageViaSocitea({ imageBase64: msg.imageBase64 })
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;

@@ -9,8 +9,6 @@
   const SOCIAL_TAG = "data-veritas-account-badge";
 
   let reelVideoIdSeq = 0;
-  /** @type {Map<string, { status: string, controller?: AbortController, result?: any }>} */
-  const reelVideoAiJobs = new Map();
   const VIDEO_AI_MAX_BASE64_CHARS = 18_000_000; // ~13MB binary ceiling for extension messaging
   let amazonReviewUid = 0;
   let activeScoreReviewPopover = null;
@@ -77,6 +75,16 @@
     }
     if (/receiving end does not exist|could not establish connection/i.test(m)) {
       return "Veritas background is not reachable. Refresh the page (F5), or reload the extension on chrome://extensions and then refresh this tab.";
+    }
+    if (/failed to fetch/i.test(m) && /socitea\.onrender\.com/i.test(m)) {
+      return m;
+    }
+    if (/^failed to fetch$/i.test(m.trim())) {
+      return (
+        "Network request failed (Failed to fetch). " +
+        "Check AI on Reels calls https://socitea.onrender.com/chat — " +
+        "reload the Veritas extension, refresh this Instagram tab, wait ~20s if Socitea is waking up, then try again."
+      );
     }
     return m;
   }
@@ -376,8 +384,7 @@
       }
       .veritas-ig-reel-overlay .veritas-check-ai-panel,
       .veritas-ig-reel-overlay .veritas-check-ai-row,
-      .veritas-ig-reel-overlay .veritas-check-ai-btn,
-      .veritas-ig-reel-overlay .veritas-video-ai-badge {
+      .veritas-ig-reel-overlay .veritas-check-ai-btn {
         pointer-events: auto;
       }
       .veritas-ig-reel-overlay .veritas-check-ai-panel {
@@ -397,74 +404,6 @@
         touch-action: manipulation;
         -webkit-user-select: none;
         user-select: none;
-      }
-
-      /* Instagram Reels — Veritas AI video detection badge */
-      .veritas-video-ai-badge {
-        pointer-events: auto;
-        width: 100%;
-        max-width: 220px;
-        margin-bottom: 6px;
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        background: rgba(10, 12, 18, 0.78);
-        backdrop-filter: blur(10px);
-        color: #f3f4f6;
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-        overflow: hidden;
-        cursor: default;
-      }
-      .veritas-video-ai-badge[data-state="ready"] {
-        cursor: pointer;
-      }
-      .veritas-video-ai-main {
-        padding: 10px 12px;
-      }
-      .veritas-video-ai-title {
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #c4b5fd;
-        margin: 0 0 6px;
-      }
-      .veritas-video-ai-line {
-        margin: 0;
-        font-size: 13px;
-        line-height: 1.35;
-        color: #e5e7eb;
-      }
-      .veritas-video-ai-line strong {
-        color: #fff;
-        font-weight: 700;
-      }
-      .veritas-video-ai-status {
-        margin: 0;
-        font-size: 13px;
-        line-height: 1.4;
-        color: #d1d5db;
-      }
-      .veritas-video-ai-status[data-kind="analyzing"] {
-        color: #fde68a;
-        font-style: italic;
-      }
-      .veritas-video-ai-status[data-kind="error"] {
-        color: #fca5a5;
-      }
-      .veritas-video-ai-details {
-        display: none;
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 8px 12px 10px;
-        font-size: 12px;
-        line-height: 1.45;
-        color: #d1d5db;
-      }
-      .veritas-video-ai-badge[data-open="1"] .veritas-video-ai-details {
-        display: block;
-      }
-      .veritas-video-ai-details div {
-        margin: 2px 0;
       }
 
       /* Amazon-only: review trust dock */
@@ -2001,6 +1940,92 @@
     throw new Error("Could not load image (extension background unreachable). Refresh the page and try again.");
   }
 
+  async function checkAiAnalyzeSocitea(payload) {
+    if (!payload || !payload.imageBase64) {
+      throw new Error("Missing reel snap");
+    }
+    const bg = await sendMessageToExtension({
+      type: "VERITAS_REEL_AI_SCORE",
+      imageBase64: payload.imageBase64,
+    });
+    if (bg && bg.ok === true && bg.data) return bg.data;
+    throw new Error(
+      formatExtensionMessagingError(bg?.error || "Socitea score request failed")
+    );
+  }
+
+  function downscaleDataUrlForSocitea(dataUrl, maxSide = 720) {
+    return new Promise((resolve, reject) => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const w = img.naturalWidth || img.width;
+            const h = img.naturalHeight || img.height;
+            const scale = Math.min(1, maxSide / Math.max(w, h, 1));
+            const tw = Math.max(1, Math.round(w * scale));
+            const th = Math.max(1, Math.round(h * scale));
+            const c = document.createElement("canvas");
+            c.width = tw;
+            c.height = th;
+            const ctx = c.getContext("2d");
+            ctx.drawImage(img, 0, 0, tw, th);
+            resolve(c.toDataURL("image/jpeg", 0.82));
+          } catch (e) {
+            reject(e);
+          }
+        };
+        img.onerror = () => reject(new Error("Failed to load snap for resize"));
+        img.src = dataUrl.startsWith("data:") ? dataUrl : `data:image/jpeg;base64,${dataUrl}`;
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  function renderReelAiScore(panel, result) {
+    const score = Math.round(Number(result?.aiProbability ?? result?.score));
+    const safe = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : null;
+    panel.textContent = "";
+    const card = document.createElement("div");
+    card.className = "veritas-check-ai-card";
+    const head = document.createElement("div");
+    head.className = "veritas-check-ai-head";
+    const title = document.createElement("span");
+    title.className = "veritas-check-ai-title";
+    title.textContent = "Check AI";
+    const ver = document.createElement("span");
+    ver.className =
+      safe != null && safe >= 50
+        ? "veritas-check-ai-verdict veritas-check-ai-verdict--ai"
+        : "veritas-check-ai-verdict veritas-check-ai-verdict--real";
+    ver.textContent = safe == null ? "—" : String(safe);
+    head.appendChild(title);
+    head.appendChild(ver);
+
+    const meter = document.createElement("div");
+    meter.className = "veritas-check-ai-meter";
+    meter.innerHTML = `<span>AI score (0=Real · 100=AI)</span><strong>${
+      safe == null ? "—" : `${safe}`
+    }</strong>`;
+
+    const barWrap = document.createElement("div");
+    barWrap.className = "veritas-check-ai-bar";
+    const bar = document.createElement("span");
+    bar.style.width = `${safe == null ? 0 : safe}%`;
+    barWrap.appendChild(bar);
+
+    const expl = document.createElement("p");
+    expl.className = "veritas-check-ai-expl";
+    expl.textContent = safe == null ? "No score returned" : String(safe);
+
+    card.appendChild(head);
+    card.appendChild(meter);
+    card.appendChild(barWrap);
+    card.appendChild(expl);
+    panel.appendChild(card);
+  }
+
   function stopIgEventSteal(ev) {
     try {
       ev.preventDefault();
@@ -2142,36 +2167,42 @@
       panel.textContent = "";
       const loadingCard = document.createElement("div");
       loadingCard.className = "veritas-check-ai-card veritas-check-ai-card--loading";
-      const isReelHost = host.getAttribute("data-veritas-reel-checkai-host") === "1";
-      loadingCard.textContent = isReelHost ? "Analyzing video..." : "Analyzing image…";
+
+      const onReel =
+        host.getAttribute("data-veritas-reel-checkai-host") === "1" ||
+        (typeof isInstagramReelSurface === "function" && isInstagram && isInstagramReelSurface());
+
+      loadingCard.textContent = onReel ? "Capturing snap..." : "Analyzing image…";
       panel.appendChild(loadingCard);
       btn.disabled = true;
 
-      const badge = isReelHost ? ensureVideoAiBadge(host) : null;
-      if (badge) setVideoAiBadgeState(badge, "analyzing");
-
       try {
-        if (isReelHost) {
-          const video = host._veritasCaptureRoot || captureRoot || findPrimaryInstagramReelVideo();
-          if (!video || !(video instanceof HTMLVideoElement)) {
-            throw new Error("Unable to analyze this video");
+        if (onReel) {
+          const video =
+            host._veritasCaptureRoot ||
+            (captureRoot instanceof HTMLVideoElement ? captureRoot : null) ||
+            findPrimaryInstagramReelVideo();
+          if (!(video instanceof HTMLVideoElement)) {
+            throw new Error("No reel video found");
           }
-          const token = ensureReelVideoToken(video);
-          loadingCard.textContent = "Capturing snap...";
-          const payload = await prepareReelSnapDetectPayload(video, { hideEls: [host] });
-          if (!payload) {
-            throw new Error("Unable to analyze this video");
+
+          let snap = await captureSingleReelSnap(video, [host]);
+          if (!snap) {
+            // Last resort: full media capture helper (tab crop).
+            const media = await captureMediaForCheckAi(video, { hideEls: [host] });
+            snap = media?.imageBase64 || null;
           }
-          loadingCard.textContent = "Analyzing video...";
-          const data = await requestDetectVideo(payload);
+          if (!snap) throw new Error("Could not capture reel snap");
+
+          loadingCard.textContent = "Scoring with Socitea...";
+          const smallSnap = await downscaleDataUrlForSocitea(snap, 720);
+          const result = await checkAiAnalyzeSocitea({ imageBase64: smallSnap });
           if (panel.dataset.veritasCheckAiDismissed === "1") return;
 
-          renderReelVideoDetectResult(panel, data);
+          renderReelAiScore(panel, result);
           setCheckAiButtonAfterResult(btn, {
-            verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
+            verdict: Number(result.aiProbability) >= 50 ? "AI-generated" : "Authentic",
           });
-          reelVideoAiJobs.set(token, { status: "ready", result: data });
-          if (badge) setVideoAiBadgeState(badge, "ready", data);
           return;
         }
 
@@ -2186,20 +2217,9 @@
         panel.textContent = "";
         const errCard = document.createElement("div");
         errCard.className = "veritas-check-ai-card veritas-check-ai-card--err";
-        errCard.textContent = isReelHost
-          ? "Unable to analyze this video"
-          : String(e?.message || e || "Check AI failed");
+        errCard.textContent = String(e?.message || e || "Check AI failed");
         panel.appendChild(errCard);
         resetCheckAiButton(btn);
-        if (badge) setVideoAiBadgeState(badge, "error");
-        const video = host._veritasCaptureRoot || captureRoot;
-        if (isReelHost && video instanceof HTMLVideoElement) {
-          try {
-            reelVideoAiJobs.set(ensureReelVideoToken(video), { status: "error" });
-          } catch {
-            /* ignore */
-          }
-        }
       } finally {
         btn.disabled = false;
       }
@@ -2557,110 +2577,6 @@
     return "";
   }
 
-  function setVideoAiBadgeState(badge, state, data) {
-    badge.setAttribute("data-state", state);
-    const main = badge.querySelector(".veritas-video-ai-main");
-    const details = badge.querySelector(".veritas-video-ai-details");
-    if (!main || !details) return;
-
-    if (state === "analyzing") {
-      badge.removeAttribute("data-open");
-      main.innerHTML =
-        `<div class="veritas-video-ai-title">Veritas AI</div>` +
-        `<p class="veritas-video-ai-status" data-kind="analyzing">Analyzing video...</p>`;
-      details.innerHTML = "";
-      return;
-    }
-
-    if (state === "error") {
-      badge.removeAttribute("data-open");
-      main.innerHTML =
-        `<div class="veritas-video-ai-title">Veritas AI</div>` +
-        `<p class="veritas-video-ai-status" data-kind="error">Unable to analyze this video</p>`;
-      details.innerHTML = "";
-      return;
-    }
-
-    if (state === "ready" && data) {
-      const aiPct = Math.round(Number(data.ai_probability) * 100);
-      const conf = formatConfidenceLabel(data.confidence);
-      const aegisPct = Math.round(Number(data.detectors?.aegis?.ai_generated_probability) * 100);
-      const maePct = Math.round(Number(data.detectors?.videomae?.deepfake_probability) * 100);
-      if (!Number.isFinite(aiPct) || !conf) {
-        setVideoAiBadgeState(badge, "error");
-        return;
-      }
-      main.innerHTML =
-        `<div class="veritas-video-ai-title">Veritas AI</div>` +
-        `<p class="veritas-video-ai-line">AI likelihood: <strong>${aiPct}%</strong></p>` +
-        `<p class="veritas-video-ai-line">Confidence: <strong>${conf}</strong></p>`;
-      details.innerHTML =
-        `<div>AEGIS: ${Number.isFinite(aegisPct) ? `${aegisPct}%` : "—"}</div>` +
-        `<div>VideoMAE: ${Number.isFinite(maePct) ? `${maePct}%` : "—"}</div>`;
-    }
-  }
-
-  function ensureVideoAiBadge(hostEl) {
-    let badge = hostEl.querySelector(".veritas-video-ai-badge");
-    if (badge) return badge;
-    badge = document.createElement("div");
-    badge.className = "veritas-video-ai-badge";
-    badge.setAttribute("data-veritas-video-ai-badge", "1");
-    badge.innerHTML =
-      `<div class="veritas-video-ai-main"></div>` +
-      `<div class="veritas-video-ai-details"></div>`;
-    badge.addEventListener(
-      "click",
-      (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        if (badge.getAttribute("data-state") !== "ready") return;
-        const open = badge.getAttribute("data-open") === "1";
-        if (open) badge.removeAttribute("data-open");
-        else badge.setAttribute("data-open", "1");
-      },
-      true
-    );
-    hostEl.insertBefore(badge, hostEl.firstChild);
-    return badge;
-  }
-
-  async function runReelVideoAiAnalysis(hostEl, video, token) {
-    const badge = ensureVideoAiBadge(hostEl);
-    const existing = reelVideoAiJobs.get(token);
-    if (existing?.status === "analyzing" || existing?.status === "ready") {
-      if (existing.status === "ready" && existing.result) {
-        setVideoAiBadgeState(badge, "ready", existing.result);
-      } else if (existing.status === "analyzing") {
-        setVideoAiBadgeState(badge, "analyzing");
-      }
-      return;
-    }
-
-    reelVideoAiJobs.set(token, { status: "analyzing" });
-    setVideoAiBadgeState(badge, "analyzing");
-
-    try {
-      const payload = await prepareReelVideoPayload(video);
-      if (!payload) {
-        reelVideoAiJobs.set(token, { status: "error" });
-        setVideoAiBadgeState(badge, "error");
-        return;
-      }
-      const result = await requestDetectVideo(payload);
-      if (!result || result.success !== true) {
-        reelVideoAiJobs.set(token, { status: "error" });
-        setVideoAiBadgeState(badge, "error");
-        return;
-      }
-      reelVideoAiJobs.set(token, { status: "ready", result });
-      setVideoAiBadgeState(badge, "ready", result);
-    } catch {
-      reelVideoAiJobs.set(token, { status: "error" });
-      setVideoAiBadgeState(badge, "error");
-    }
-  }
-
   /**
    * Instagram Reels: mount Check AI as a fixed portal on document.body.
    * Must NOT live under the video tree — IG’s pause/play hit-layer sits above
@@ -2706,29 +2622,11 @@
       attachCheckAiToHost(hostEl, video);
     }
 
+    /* Remove legacy Veritas AI prompt badge if any leftover. */
+    hostEl.querySelectorAll(".veritas-video-ai-badge").forEach((n) => n.remove());
+
     hostEl._veritasCaptureRoot = video;
     positionReelCheckAiHost(hostEl, video);
-    const badge = ensureVideoAiBadge(hostEl);
-    const job = reelVideoAiJobs.get(token);
-    if (job?.status === "ready" && job.result) {
-      setVideoAiBadgeState(badge, "ready", job.result);
-    } else if (job?.status === "analyzing") {
-      setVideoAiBadgeState(badge, "analyzing");
-    } else if (job?.status === "error") {
-      setVideoAiBadgeState(badge, "error");
-    } else {
-      /* Idle until the user presses Check AI (AEGIS + VideoMAE). */
-      badge.setAttribute("data-state", "idle");
-      badge.removeAttribute("data-open");
-      const main = badge.querySelector(".veritas-video-ai-main");
-      const details = badge.querySelector(".veritas-video-ai-details");
-      if (main) {
-        main.innerHTML =
-          `<div class="veritas-video-ai-title">Veritas AI</div>` +
-          `<p class="veritas-video-ai-status">Press Check AI to analyze</p>`;
-      }
-      if (details) details.innerHTML = "";
-    }
   }
 
   function findCandidatePosts() {

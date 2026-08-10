@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Veritas Trust Layer",
-  "version": "0.1.6",
+  "version": "0.2.1",
   "description": "Credibility scores, AI/bot probability, and Veritas Insight injected into your feed.",
   "action": {
     "default_title": "Veritas"
@@ -22,6 +22,7 @@
     "https://reddit.com/*",
     "https://www.instagram.com/*",
     "https://instagram.com/*",
+    "https://socitea.onrender.com/*",
     "<all_urls>"
   ],
   "background": {
