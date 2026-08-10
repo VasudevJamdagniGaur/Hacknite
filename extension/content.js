@@ -2157,10 +2157,12 @@
             throw new Error("Unable to analyze this video");
           }
           const token = ensureReelVideoToken(video);
-          const payload = await prepareReelVideoPayload(video);
+          loadingCard.textContent = "Capturing snap...";
+          const payload = await prepareReelSnapDetectPayload(video, { hideEls: [host] });
           if (!payload) {
             throw new Error("Unable to analyze this video");
           }
+          loadingCard.textContent = "Analyzing video...";
           const data = await requestDetectVideo(payload);
           if (panel.dataset.veritasCheckAiDismissed === "1") return;
 
@@ -2358,6 +2360,136 @@
         reject(e);
       }
     });
+  }
+
+  function sleepMs(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  /**
+   * One snap of the playing reel: canvas frame if readable, else tab-region crop.
+   * Does not bypass DRM/CORS — only reads pixels already shown on screen.
+   */
+  async function captureSingleReelSnap(video, hideEls) {
+    if (!(video instanceof HTMLVideoElement)) return null;
+    const direct = tryCaptureVideoFrame(video);
+    if (direct?.imageBase64) return direct.imageBase64;
+    const shot = await captureTabRegionForElement(video, hideEls || []);
+    if (shot?.imageBase64) return shot.imageBase64;
+    return null;
+  }
+
+  /**
+   * Sample snaps while the reel plays (or repeat one snap) so AEGIS/VideoMAE
+   * receive a short video built from on-screen frames.
+   */
+  async function captureReelSnapsForDetect(video, hideEls, count = 16) {
+    const frames = [];
+    const n = Math.max(1, Math.min(16, count));
+    for (let i = 0; i < n; i++) {
+      const snap = await captureSingleReelSnap(video, hideEls);
+      if (snap) frames.push(snap);
+      if (i < n - 1) await sleepMs(110);
+    }
+    if (!frames.length) return [];
+    while (frames.length < 16) frames.push(frames[frames.length - 1]);
+    return frames.slice(0, 16);
+  }
+
+  function loadImageFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Failed to load snap"));
+      img.src = dataUrl.startsWith("data:")
+        ? dataUrl
+        : `data:image/jpeg;base64,${dataUrl}`;
+    });
+  }
+
+  /**
+   * Encode snap frames into a short WebM clip for POST /api/detect-video.
+   */
+  async function encodeSnapsToWebmBlob(dataUrls) {
+    if (!dataUrls?.length) throw new Error("No snaps to encode");
+    const images = [];
+    for (const url of dataUrls) {
+      images.push(await loadImageFromDataUrl(url));
+    }
+
+    const w = Math.max(2, images[0].naturalWidth || images[0].width || 320);
+    const h = Math.max(2, images[0].naturalHeight || images[0].height || 320);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unavailable");
+
+    const mimeCandidates = [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+    ];
+    const mimeType =
+      mimeCandidates.find((m) => window.MediaRecorder?.isTypeSupported?.(m)) || "";
+    if (!mimeType || typeof MediaRecorder === "undefined") {
+      throw new Error("MediaRecorder unavailable");
+    }
+
+    const stream = canvas.captureStream(8);
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_200_000 });
+
+    const done = new Promise((resolve, reject) => {
+      rec.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size) chunks.push(ev.data);
+      };
+      rec.onerror = () => reject(new Error("Failed to encode reel snap"));
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (!chunks.length) {
+          reject(new Error("Empty snap encoding"));
+          return;
+        }
+        resolve(new Blob(chunks, { type: mimeType }));
+      };
+    });
+
+    rec.start(200);
+    const frameMs = 120;
+    for (let i = 0; i < images.length; i++) {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(images[i], 0, 0, w, h);
+      await sleepMs(frameMs);
+    }
+    // Hold last frame briefly so the recorder flushes.
+    await sleepMs(250);
+    if (rec.state !== "inactive") rec.stop();
+    return done;
+  }
+
+  /**
+   * Check AI on Reels: snap the on-screen reel → short clip → AEGIS + VideoMAE.
+   */
+  async function prepareReelSnapDetectPayload(video, opts) {
+    const hideEls = opts?.hideEls || [];
+    try {
+      const snaps = await captureReelSnapsForDetect(video, hideEls, 16);
+      if (!snaps.length) return null;
+      const blob = await encodeSnapsToWebmBlob(snaps);
+      if (!blob || blob.size < 256) return null;
+      if (blob.size > VIDEO_AI_MAX_BASE64_CHARS * 0.75) return null;
+      const videoBase64 = await blobToBase64(blob);
+      if (!videoBase64 || videoBase64.length > VIDEO_AI_MAX_BASE64_CHARS) return null;
+      return {
+        videoBase64,
+        mimeType: blob.type || "video/webm",
+        filename: "reel-snap.webm",
+      };
+    } catch {
+      return null;
+    }
   }
 
   async function prepareReelVideoPayload(video) {
