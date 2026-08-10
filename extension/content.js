@@ -1494,10 +1494,48 @@
     else el.classList.add("veritas-ig-realness--low");
   }
 
+  /** True if this handle already has a score badge near the same reel/post header. */
+  function igHandleAlreadyBadgedNear(anchor, handle) {
+    const key = String(handle || "").toLowerCase();
+    if (!key) return false;
+    const root =
+      anchor.closest("header") ||
+      anchor.closest("article") ||
+      anchor.closest('[role="presentation"]') ||
+      anchor.parentElement;
+    if (root) {
+      const local = root.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]");
+      for (const b of local) {
+        if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() === key) {
+          return true;
+        }
+      }
+    }
+    const ar = anchor.getBoundingClientRect();
+    const all = document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]");
+    for (const b of all) {
+      if (String(b.getAttribute("data-veritas-score-key") || "").toLowerCase() !== key) continue;
+      const br = b.getBoundingClientRect();
+      if (Math.abs(br.top - ar.top) < 56 && Math.abs(br.left - ar.left) < 360) return true;
+    }
+    return false;
+  }
+
+  /** Prefer the visible @username text link over other profile hrefs in the same row. */
+  function igAnchorUsernameScore(anchor, handle) {
+    const text = (anchor.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const h = String(handle || "").toLowerCase();
+    if (!text) return 0;
+    if (text === h || text === `@${h}`) return 100;
+    if (text.includes(h)) return 80;
+    return 20;
+  }
+
   function scanInstagram() {
     injectStyleOnce();
     const anchors = Array.from(document.querySelectorAll('a[href^="/"], a[href*="instagram.com"]'));
-    const slotSeen = new Set();
+    const candidates = [];
+
     for (const a of anchors) {
       if (a.getAttribute(IG_TAG) === "1") continue;
       const handle = instagramHandleFromHref(a.getAttribute("href") || "");
@@ -1506,16 +1544,54 @@
 
       const r = a.getBoundingClientRect();
       if (r.width < 2 && r.height < 2) continue;
-
-      const slot = `${handle}@${Math.round(r.top / 320)}_${Math.round(r.left / 200)}`;
-      if (slotSeen.has(slot)) {
+      if (igHandleAlreadyBadgedNear(a, handle)) {
         a.setAttribute(IG_TAG, "1");
         continue;
       }
-      slotSeen.add(slot);
 
-      a.setAttribute(IG_TAG, "1");
-      attachAccountScoreBadge(a, handle, isInstagramReelSurface());
+      candidates.push({
+        a,
+        handle,
+        top: r.top,
+        left: r.left,
+        score: igAnchorUsernameScore(a, handle),
+      });
+    }
+
+    // One badge per handle per vertical band (same header row).
+    candidates.sort((x, y) => y.score - x.score || x.left - y.left);
+    const taken = new Set();
+    for (const c of candidates) {
+      const band = Math.round(c.top / 64);
+      const dedupeKey = `${c.handle.toLowerCase()}@${band}`;
+      if (taken.has(dedupeKey)) {
+        c.a.setAttribute(IG_TAG, "1");
+        continue;
+      }
+      if (igHandleAlreadyBadgedNear(c.a, c.handle)) {
+        c.a.setAttribute(IG_TAG, "1");
+        continue;
+      }
+      taken.add(dedupeKey);
+      c.a.setAttribute(IG_TAG, "1");
+      attachAccountScoreBadge(c.a, c.handle, isInstagramReelSurface());
+    }
+
+    // Clean accidental duplicates already in the DOM (same handle, same row).
+    const byKey = new Map();
+    document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]").forEach((b) => {
+      const handle = String(b.getAttribute("data-veritas-score-key") || "").toLowerCase();
+      if (!handle) return;
+      const r = b.getBoundingClientRect();
+      const k = `${handle}@${Math.round(r.top / 64)}`;
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(b);
+    });
+    for (const group of byKey.values()) {
+      if (group.length < 2) continue;
+      // Keep the rightmost badge (usually next to the username text).
+      group.sort((x, y) => y.getBoundingClientRect().left - x.getBoundingClientRect().left);
+      for (let i = 1; i < group.length; i++) group[i].remove();
     }
   }
 
