@@ -114,6 +114,9 @@ const PINNED_ACCOUNT_SCORES = {
   geekroom__: 100,
   "talk.with.adarsh": 92,
   namanbansal013: 94,
+  "li:anindita-bhowmick-387449395": 88,
+  "li:adarsh-chauhan-b87609225": 91,
+  "li:namanbansal013": 95,
 };
 
 function pinnedAccountScore(handle) {
