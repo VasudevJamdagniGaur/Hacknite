@@ -804,6 +804,11 @@
         max-width: 100%;
         position: static !important;
       }
+      div[data-veritas-li-name-wrap="1"] {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+      }
       .veritas-account-badge--linkedin.veritas-ig-realness--loading {
         background: #e5e7eb !important;
         border: 1px solid #6b7280 !important;
@@ -1880,9 +1885,15 @@
   function scanLinkedInAccountBadges() {
     injectStyleOnce();
 
-    // Profile page: pin score next to the h1 name (Yuvraj Arora [93]).
     const profileKey = getLinkedInProfileVanityFromPath();
-    if (profileKey && !document.querySelector(`.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`)) {
+    const existingProfileBadge = profileKey
+      ? document.querySelector(
+          `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`
+        )
+      : null;
+
+    // Profile page: pin score next to the display name.
+    if (profileKey && !existingProfileBadge) {
       const nameEl = findLinkedInProfileNameNode();
       if (nameEl) {
         attachAccountScoreBadge(nameEl, profileKey, false, "veritas-account-badge--linkedin");
@@ -1893,7 +1904,16 @@
       document.querySelectorAll('a[href*="/in/"], a[href*="linkedin.com/in/"]')
     );
     const slotSeen = new Set();
-    const takenKeys = new Set(profileKey ? [profileKey.toLowerCase()] : []);
+    // Only treat profile as "taken" once a badge actually exists.
+    const takenKeys = new Set();
+    if (
+      profileKey &&
+      document.querySelector(
+        `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`
+      )
+    ) {
+      takenKeys.add(profileKey.toLowerCase());
+    }
 
     for (const a of anchors) {
       if (a.getAttribute(SOCIAL_TAG) === "1") continue;
@@ -1908,26 +1928,23 @@
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
-      // Skip notification / messaging chrome.
       if (a.closest(".global-nav, header.global-nav__content, .msg-overlay-list-bubble")) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
 
       const text = (a.textContent || "").replace(/\s+/g, " ").trim();
-      // Need a visible name, not an empty / icon-only profile link.
       if (!text || text.length < 2) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
-      if (/^(message|connect|follow|pending|more)$/i.test(text)) {
+      if (/^(message|connect|follow|pending|more|view profile)$/i.test(text)) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
 
       const r = a.getBoundingClientRect();
       if (r.width < 2 && r.height < 2) continue;
-      // Prefer main feed / left column over right-rail promos.
       if (r.left > window.innerWidth * 0.72) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
@@ -1938,8 +1955,13 @@
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
-      if (document.querySelector(`.veritas-ig-realness[data-veritas-score-key="${CSS.escape(scoreKey)}"]`)) {
+      if (
+        document.querySelector(
+          `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(scoreKey)}"]`
+        )
+      ) {
         a.setAttribute(SOCIAL_TAG, "1");
+        takenKeys.add(scoreKey.toLowerCase());
         continue;
       }
 
@@ -1950,7 +1972,6 @@
       attachAccountScoreBadge(nameTarget, scoreKey, false, "veritas-account-badge--linkedin");
     }
 
-    // Clean badges that landed in the wrong chrome or still overlay names.
     document.querySelectorAll(".veritas-account-badge--linkedin").forEach((b) => {
       if (b.closest("aside, nav, footer, .scaffold-layout__aside, .global-nav")) b.remove();
     });
@@ -1960,7 +1981,25 @@
     try {
       const parts = (location.pathname || "").split("/").filter(Boolean);
       if (parts[0] !== "in" || !parts[1]) return null;
-      const v = decodeURIComponent(parts[1]);
+      let v = decodeURIComponent(parts[1]);
+      // Own-profile short path sometimes appears as /in/me/
+      if (v.toLowerCase() === "me") {
+        const pub = document.querySelector(
+          'a[href*="linkedin.com/in/"], a[href^="/in/"]'
+        );
+        const fromPub = pub && linkedinVanityFromHref(pub.getAttribute("href") || "");
+        if (fromPub) return fromPub;
+        // Sidebar “Public profile & URL”
+        const urlText = Array.from(document.querySelectorAll("a, span, p"))
+          .map((n) => (n.textContent || "").trim())
+          .find((t) => /linkedin\.com\/in\//i.test(t));
+        if (urlText) {
+          const m = urlText.match(/linkedin\.com\/in\/([a-zA-Z0-9\-_%]+)/i);
+          if (m) v = m[1];
+        } else {
+          return null;
+        }
+      }
       if (LI_RESERVED.has(v.toLowerCase())) return null;
       if (!/^[a-zA-Z0-9\-_%]{2,120}$/.test(v)) return null;
       return `li:${v}`;
@@ -1970,20 +2009,58 @@
   }
 
   function findLinkedInProfileNameNode() {
-    const nodes = Array.from(document.querySelectorAll("h1"));
+    const selectors = [
+      "main h1",
+      "section.artdeco-card h1",
+      ".pv-text-details__left-panel h1",
+      "h1.text-heading-xlarge",
+      "h1.inline.t-24",
+      "h1[class*='heading']",
+      "h1",
+    ];
+    const seen = new Set();
+    const nodes = [];
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (!seen.has(el)) {
+          seen.add(el);
+          nodes.push(el);
+        }
+      });
+    }
+    // Fallback: large heading-like divs used in some LinkedIn A/B layouts.
+    document
+      .querySelectorAll(
+        ".text-heading-xlarge, [data-anonymize='person-name'], .artdeco-entity-lockup__title"
+      )
+      .forEach((el) => {
+        if (!seen.has(el)) {
+          seen.add(el);
+          nodes.push(el);
+        }
+      });
+
     let best = null;
     let bestScore = -1;
     for (const el of nodes) {
       if (!(el instanceof HTMLElement)) continue;
-      if (el.closest("aside, footer, nav, [role='navigation'], .scaffold-layout__aside")) continue;
-      if (el.querySelector(".veritas-ig-realness")) continue;
-      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (!t || t.length < 2 || t.length > 90) continue;
+      if (el.closest("aside, footer, nav, [role='navigation'], .scaffold-layout__aside, .global-nav")) {
+        continue;
+      }
+      if (el.querySelector(".veritas-ig-realness, [data-veritas-li-name-wrap]")) continue;
+      let t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      // Strip pronouns for length check
+      t = t.replace(/\b(he\/him|she\/her|they\/them)\b/gi, "").trim();
+      if (!t || t.length < 2 || t.length > 100) continue;
       const r = el.getBoundingClientRect();
-      if (r.width < 24 || r.height < 12) continue;
-      if (r.top > 520 || r.left > window.innerWidth * 0.62) continue;
-      // Prefer the large profile-top-card name.
-      const score = r.width * 2 - r.top + (el.className.includes("heading") ? 80 : 0);
+      if (r.width < 20 || r.height < 10) continue;
+      if (r.bottom < 0 || r.top > Math.min(700, window.innerHeight * 0.75)) continue;
+      if (r.left > window.innerWidth * 0.7) continue;
+      const score =
+        r.width * 2 -
+        r.top +
+        (el.tagName === "H1" ? 120 : 0) +
+        (String(el.className || "").includes("heading") ? 80 : 0);
       if (score > bestScore) {
         bestScore = score;
         best = el;
@@ -2003,8 +2080,8 @@
     badge.style.setProperty("flex-shrink", "0", "important");
     badge.style.setProperty("float", "none", "important");
     badge.style.setProperty("inset", "auto", "important");
-    badge.style.marginLeft = "0";
-    badge.style.marginRight = "0";
+    badge.style.marginLeft = "8px";
+    badge.style.marginRight = "4px";
     badge.style.verticalAlign = "middle";
 
     // Prefer the full actor-title / name lockup, not a nested absolute span.
@@ -2013,11 +2090,10 @@
         ".update-components-actor__title, .update-components-actor__name, .feed-shared-actor__name, .artdeco-entity-lockup__title, a[href*='/in/']"
       ) || nameEl;
 
-    if (nameEl.tagName === "H1" || nameEl.matches?.("h1")) {
+    if (nameEl.tagName === "H1" || nameEl.matches?.("h1") || nameEl.classList?.contains("text-heading-xlarge")) {
       target = nameEl;
     }
 
-    // Already wrapped — just append badge if missing.
     const existingWrap = target.closest?.("[data-veritas-li-name-wrap='1']");
     if (existingWrap) {
       if (!existingWrap.querySelector(".veritas-account-badge--linkedin")) {
@@ -2026,7 +2102,24 @@
       return;
     }
 
-    // Inline wrap: [Name][100] — keeps badge out of LinkedIn absolute layers.
+    // CRITICAL: never wrap <h1> in <span> (invalid HTML; browser hoists h1 and drops the badge).
+    const isBlockHeading =
+      target.tagName === "H1" ||
+      target.tagName === "H2" ||
+      target.tagName === "H3" ||
+      target.classList?.contains("text-heading-xlarge");
+
+    if (isBlockHeading) {
+      const wrap = document.createElement("div");
+      wrap.setAttribute("data-veritas-li-name-wrap", "1");
+      wrap.style.cssText =
+        "display:flex!important;align-items:center!important;flex-wrap:wrap!important;gap:8px!important;max-width:100%;position:static!important;";
+      target.parentNode.insertBefore(wrap, target);
+      wrap.appendChild(target);
+      wrap.appendChild(badge);
+      return;
+    }
+
     const wrap = document.createElement("span");
     wrap.setAttribute("data-veritas-li-name-wrap", "1");
     wrap.style.cssText =
@@ -3953,4 +4046,17 @@
   });
 
   obs.observe(document.documentElement, { childList: true, subtree: true });
+
+  // LinkedIn profile/feed SPA: name heading often mounts after first paint.
+  if (isLinkedIn) {
+    [400, 1200, 2500, 5000].forEach((ms) => {
+      window.setTimeout(() => {
+        try {
+          scanLinkedInAccountBadges();
+        } catch {
+          /* ignore */
+        }
+      }, ms);
+    });
+  }
 })();
