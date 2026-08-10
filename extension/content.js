@@ -784,6 +784,14 @@
       /* LinkedIn default UI is light gray/white — translucent pills are illegible. */
       .veritas-account-badge--linkedin.veritas-ig-realness {
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
+        display: inline-flex !important;
+        flex-shrink: 0;
+        align-self: center;
+        vertical-align: middle;
+        margin-left: 8px;
+        margin-right: 4px;
+        position: relative;
+        z-index: 5;
       }
       .veritas-account-badge--linkedin.veritas-ig-realness--loading {
         background: #e5e7eb !important;
@@ -1552,6 +1560,8 @@
     } else if (extraBadgeClass === "veritas-account-badge--x") {
       // X: same line as name, after blue tick (not below the name).
       placeXScoreBetweenNameAndTick(badge, anchor);
+    } else if (extraBadgeClass === "veritas-account-badge--linkedin") {
+      placeLinkedInScoreNextToName(badge, anchor);
     } else if (insertBadgeBeforeAnchor) {
       anchor.insertAdjacentElement("beforebegin", badge);
       badge.classList.add("veritas-ig-realness--next-to-handle");
@@ -1858,26 +1868,152 @@
 
   function scanLinkedInAccountBadges() {
     injectStyleOnce();
+
+    // Profile page: pin score next to the h1 name (Yuvraj Arora [93]).
+    const profileKey = getLinkedInProfileVanityFromPath();
+    if (profileKey && !document.querySelector(`.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`)) {
+      const nameEl = findLinkedInProfileNameNode();
+      if (nameEl) {
+        attachAccountScoreBadge(nameEl, profileKey, false, "veritas-account-badge--linkedin");
+      }
+    }
+
     const anchors = Array.from(
       document.querySelectorAll('a[href*="/in/"], a[href*="linkedin.com/in/"]')
     );
     const slotSeen = new Set();
+    const takenKeys = new Set(profileKey ? [profileKey.toLowerCase()] : []);
+
     for (const a of anchors) {
       if (a.getAttribute(SOCIAL_TAG) === "1") continue;
       const scoreKey = linkedinVanityFromHref(a.getAttribute("href") || "");
       if (!scoreKey) continue;
+      if (takenKeys.has(scoreKey.toLowerCase())) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
       if (isLikelyGenericAvatarLink(a)) continue;
+      if (a.closest("aside, footer, nav, [role='navigation'], .scaffold-layout__aside")) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+      // Skip notification / messaging chrome.
+      if (a.closest(".global-nav, header.global-nav__content, .msg-overlay-list-bubble")) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+
+      const text = (a.textContent || "").replace(/\s+/g, " ").trim();
+      // Need a visible name, not an empty / icon-only profile link.
+      if (!text || text.length < 2) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+      if (/^(message|connect|follow|pending|more)$/i.test(text)) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+
       const r = a.getBoundingClientRect();
       if (r.width < 2 && r.height < 2) continue;
-      const slot = `${scoreKey}@${Math.round(r.top / 280)}_${Math.round(r.left / 200)}`;
+      // Prefer main feed / left column over right-rail promos.
+      if (r.left > window.innerWidth * 0.72) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+
+      const slot = `${scoreKey}@${Math.round(r.top / 200)}`;
       if (slotSeen.has(slot)) {
         a.setAttribute(SOCIAL_TAG, "1");
         continue;
       }
+      if (document.querySelector(`.veritas-ig-realness[data-veritas-score-key="${CSS.escape(scoreKey)}"]`)) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
+      }
+
       slotSeen.add(slot);
+      takenKeys.add(scoreKey.toLowerCase());
       a.setAttribute(SOCIAL_TAG, "1");
       attachAccountScoreBadge(a, scoreKey, false, "veritas-account-badge--linkedin");
     }
+
+    // Clean badges that landed in the wrong chrome.
+    document.querySelectorAll(".veritas-account-badge--linkedin").forEach((b) => {
+      if (b.closest("aside, nav, footer, .scaffold-layout__aside, .global-nav")) b.remove();
+    });
+  }
+
+  function getLinkedInProfileVanityFromPath() {
+    try {
+      const parts = (location.pathname || "").split("/").filter(Boolean);
+      if (parts[0] !== "in" || !parts[1]) return null;
+      const v = decodeURIComponent(parts[1]);
+      if (LI_RESERVED.has(v.toLowerCase())) return null;
+      if (!/^[a-zA-Z0-9\-_%]{2,120}$/.test(v)) return null;
+      return `li:${v}`;
+    } catch {
+      return null;
+    }
+  }
+
+  function findLinkedInProfileNameNode() {
+    const nodes = Array.from(document.querySelectorAll("h1"));
+    let best = null;
+    let bestScore = -1;
+    for (const el of nodes) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (el.closest("aside, footer, nav, [role='navigation'], .scaffold-layout__aside")) continue;
+      if (el.querySelector(".veritas-ig-realness")) continue;
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!t || t.length < 2 || t.length > 90) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 24 || r.height < 12) continue;
+      if (r.top > 520 || r.left > window.innerWidth * 0.62) continue;
+      // Prefer the large profile-top-card name.
+      const score = r.width * 2 - r.top + (el.className.includes("heading") ? 80 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return best;
+  }
+
+  /** Place score immediately after the LinkedIn display name on the same line. */
+  function placeLinkedInScoreNextToName(badge, nameEl) {
+    badge.classList.add("veritas-ig-realness--next-to-handle");
+    badge.style.display = "inline-flex";
+    badge.style.flexShrink = "0";
+    badge.style.alignSelf = "center";
+    badge.style.verticalAlign = "middle";
+    badge.style.marginLeft = "8px";
+    badge.style.marginRight = "4px";
+
+    if (!(nameEl instanceof HTMLElement)) {
+      return;
+    }
+
+    // h1 / name block: insert after the name span, before pronouns like He/Him.
+    if (nameEl.tagName === "H1" || nameEl.matches?.("h1")) {
+      const kids = Array.from(nameEl.querySelectorAll(":scope > span, :scope > a"));
+      const nameSpan = kids.find((s) => {
+        const t = (s.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length < 2) return false;
+        if (/^(he\/him|she\/her|they\/them)$/i.test(t)) return false;
+        if (/^\d+(st|nd|rd|th)$/i.test(t)) return false;
+        return true;
+      });
+      if (nameSpan) {
+        nameSpan.insertAdjacentElement("afterend", badge);
+        return;
+      }
+      nameEl.insertAdjacentElement("afterend", badge);
+      return;
+    }
+
+    // Feed author link: after the link text.
+    nameEl.insertAdjacentElement("afterend", badge);
   }
 
   function scanRedditAccountBadges() {
