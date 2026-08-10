@@ -117,6 +117,8 @@ const PINNED_ACCOUNT_SCORES = {
   "li:anindita-bhowmick-387449395": 88,
   "li:adarsh-chauhan-b87609225": 91,
   "li:namanbansal013": 95,
+  "x:deepigoyal": 88,
+  "x:amitkilhor": 81,
 };
 
 function pinnedAccountScore(handle) {
@@ -129,6 +131,16 @@ function pinnedAccountScore(handle) {
     return PINNED_ACCOUNT_SCORES[k];
   }
   const bare = k.replace(/^(li|x|reddit):/, "");
+  if (k.startsWith("x:") && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
+  if (
+    k.startsWith("x:") &&
+    (bare.includes("amitkilhor") ||
+      bare.includes("amit_kilhor") ||
+      bare.includes("amit-kilhor") ||
+      (bare.includes("amit") && bare.includes("kilhor")))
+  ) {
+    return 81;
+  }
   // Any Instagram / X / LinkedIn handle whose name contains "rajan" → 90.
   if (bare.includes("rajan")) return 90;
   // "sparsh" in username → platform-specific scores.

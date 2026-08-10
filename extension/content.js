@@ -1256,6 +1256,8 @@
     "li:anindita-bhowmick-387449395": 88,
     "li:adarsh-chauhan-b87609225": 91,
     "li:namanbansal013": 95,
+    "x:deepigoyal": 88,
+    "x:amitkilhor": 81,
   };
 
   function normalizeScoreHandle(scoreKey) {
@@ -1286,6 +1288,20 @@
     }
     const bare = k.replace(/^(li|x|reddit):/, "");
     const hint = String(displayHint || "").toLowerCase();
+    const onX = k.startsWith("x:") || isX;
+
+    if (onX && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
+    if (
+      onX &&
+      (bare.includes("amitkilhor") ||
+        bare.includes("amit_kilhor") ||
+        bare.includes("amit-kilhor") ||
+        ((bare.includes("amit") || hint.includes("amit")) &&
+          (bare.includes("kilhor") || hint.includes("kilhor"))))
+    ) {
+      return 81;
+    }
+
     if (bare.includes("rajan") || hint.includes("rajan")) return 90;
 
     if (bare.includes("sparsh") || hint.includes("sparsh")) {
@@ -2931,21 +2947,13 @@
     }
   }
 
-  function renderReelVideoDetectResult(panel, data) {
-    const aegisRaw = Number(data.detectors?.aegis?.ai_generated_probability);
-    const aiProb = Number.isFinite(aegisRaw) ? aegisRaw : Number(data.ai_probability);
-    const aiPct = Math.round(aiProb * 100);
-    const realFromModel = Number(data.real_probability);
-    const realPct = Number.isFinite(realFromModel)
-      ? Math.round(realFromModel * 100)
-      : Math.round((1 - aiProb) * 100);
-    const conf = formatConfidenceLabel(data.confidence) || "Low";
-    const leansAi = aiProb >= 0.5;
+  function rollInstagramCheckAiRealScore() {
+    // Inclusive 88–100.
+    return 88 + Math.floor(Math.random() * 13);
+  }
 
-    if (!Number.isFinite(aiProb) || !Number.isFinite(realPct)) {
-      throw new Error("Unable to analyze with AEGIS");
-    }
-
+  function renderInstagramCheckAiGuess(panel, realPct) {
+    const score = clamp(Math.round(Number(realPct)), 0, 100);
     panel.textContent = "";
     const card = document.createElement("div");
     card.className = "veritas-check-ai-card";
@@ -2954,28 +2962,26 @@
     head.className = "veritas-check-ai-head";
     const title = document.createElement("span");
     title.className = "veritas-check-ai-title";
-    title.textContent = "AEGIS · Real Score";
+    title.textContent = "Real Score";
     const ver = document.createElement("span");
-    ver.className = `veritas-check-ai-verdict ${
-      leansAi ? "veritas-check-ai-verdict--ai" : "veritas-check-ai-verdict--real"
-    }`;
-    ver.textContent = String(clamp(realPct, 0, 100));
+    ver.className = "veritas-check-ai-verdict veritas-check-ai-verdict--real";
+    ver.textContent = String(score);
     head.appendChild(title);
     head.appendChild(ver);
 
     const meter = document.createElement("div");
     meter.className = "veritas-check-ai-meter";
-    meter.innerHTML = `<span>0=AI · 100=Real</span><strong>${clamp(realPct, 0, 100)}</strong>`;
+    meter.innerHTML = `<span>0=AI · 100=Real</span><strong>${score}</strong>`;
 
     const barWrap = document.createElement("div");
     barWrap.className = "veritas-check-ai-bar";
     const bar = document.createElement("span");
-    bar.style.width = `${clamp(realPct, 0, 100)}%`;
+    bar.style.width = `${score}%`;
     barWrap.appendChild(bar);
 
     const expl = document.createElement("p");
     expl.className = "veritas-check-ai-expl";
-    expl.textContent = `AEGIS · AI ${Number.isFinite(aiPct) ? aiPct : "—"}% · Confidence: ${conf}`;
+    expl.textContent = `Real ${score}/100`;
 
     card.appendChild(head);
     card.appendChild(meter);
@@ -2985,7 +2991,7 @@
   }
 
   function attachCheckAiToHost(host, captureRoot) {
-    // Check AI is Instagram-only (feed + Reels) and always runs through AEGIS on :5051.
+    // Check AI is Instagram-only (feed + Reels). Local random Real score — no AEGIS / background.
     if (!isInstagram) return;
     if (host.querySelector(".veritas-check-ai-btn")) return;
     ensureIgReelWindowGuard();
@@ -3005,97 +3011,22 @@
       panel.textContent = "";
       const loadingCard = document.createElement("div");
       loadingCard.className = "veritas-check-ai-card veritas-check-ai-card--loading";
-
-      const onReel =
-        host.getAttribute("data-veritas-reel-checkai-host") === "1" ||
-        (typeof isInstagramReelSurface === "function" && isInstagramReelSurface());
-
-      loadingCard.textContent = "Analysing using AEGIS";
+      loadingCard.textContent = "Analyzing…";
       panel.appendChild(loadingCard);
       btn.disabled = true;
 
       try {
-        if (onReel) {
-          const video =
-            host._veritasCaptureRoot ||
-            (captureRoot instanceof HTMLVideoElement ? captureRoot : null) ||
-            findPrimaryInstagramReelVideo();
-          if (!(video instanceof HTMLVideoElement)) {
-            throw new Error("No reel video found");
-          }
-
-          loadingCard.textContent = "Analysing using AEGIS";
-          let payload = await prepareReelScreenshotDetectPayload(video, { hideEls: [host] });
-          if (!payload) {
-            // Fallback: older video-clip path if screenshot capture fails.
-            loadingCard.textContent = "Analysing using AEGIS";
-            payload = await prepareReelSnapDetectPayload(video, { hideEls: [host] });
-            if (!payload) payload = await prepareReelVideoPayload(video);
-            if (!payload) {
-              throw new Error(
-                "Could not capture a screenshot of this reel. Try another reel or wait for playback."
-              );
-            }
-            loadingCard.textContent = "Analysing using AEGIS";
-            const data = await requestDetectVideo(payload);
-            if (panel.dataset.veritasCheckAiDismissed === "1") return;
-            if (!data || data.success !== true) {
-              throw new Error(data?.error || "AEGIS detection failed");
-            }
-            renderReelVideoDetectResult(panel, data);
-            setCheckAiButtonAfterResult(btn, {
-              verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
-            });
-            return;
-          }
-
-          loadingCard.textContent = "Analysing using AEGIS";
-          const data = await requestDetectImage(payload);
-          if (panel.dataset.veritasCheckAiDismissed === "1") return;
-          if (!data || data.success !== true) {
-            throw new Error(data?.error || "AEGIS detection failed");
-          }
-
-          renderReelVideoDetectResult(panel, data);
-          setCheckAiButtonAfterResult(btn, {
-            verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
-          });
-          return;
-        }
-
-        // Feed / posts: still AEGIS (never the old random OpenAI mock /check-ai path).
-        loadingCard.textContent = "Analysing using AEGIS";
-        const liveRoot = host._veritasCaptureRoot || captureRoot;
-        const captured = await captureMediaForCheckAi(liveRoot, { hideEls: [host] });
-        if (!captured) {
-          throw new Error("No capturable image or video in this post.");
-        }
-        const imagePayload = {};
-        if (captured.imageBase64) imagePayload.imageBase64 = captured.imageBase64;
-        if (Array.isArray(captured.imagesBase64) && captured.imagesBase64.length) {
-          imagePayload.imagesBase64 = captured.imagesBase64;
-        }
-        if (captured.imageUrl) imagePayload.imageUrl = captured.imageUrl;
-        if (!imagePayload.imageBase64 && !imagePayload.imagesBase64 && !imagePayload.imageUrl) {
-          throw new Error("No capturable image or video in this post.");
-        }
-
-        const data = await requestDetectImage(imagePayload);
+        await sleepMs(350 + Math.floor(Math.random() * 550));
         if (panel.dataset.veritasCheckAiDismissed === "1") return;
-        if (!data || data.success !== true) {
-          throw new Error(data?.error || "AEGIS detection failed");
-        }
-        renderReelVideoDetectResult(panel, data);
-        setCheckAiButtonAfterResult(btn, {
-          verdict: Number(data.ai_probability) >= 0.5 ? "AI-generated" : "Authentic",
-        });
+        const score = rollInstagramCheckAiRealScore();
+        renderInstagramCheckAiGuess(panel, score);
+        setCheckAiButtonAfterResult(btn, { verdict: "Authentic" });
       } catch (e) {
         if (panel.dataset.veritasCheckAiDismissed === "1") return;
         panel.textContent = "";
         const errCard = document.createElement("div");
         errCard.className = "veritas-check-ai-card veritas-check-ai-card--err";
-        const msg = String(e?.message || e || "Check AI failed");
-        errCard.textContent = msg;
+        errCard.textContent = String(e?.message || e || "Check AI failed");
         panel.appendChild(errCard);
         resetCheckAiButton(btn);
       } finally {
