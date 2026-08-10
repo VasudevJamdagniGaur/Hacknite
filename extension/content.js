@@ -1445,13 +1445,23 @@
       wrap.style.cssText =
         "display:inline-flex;align-items:center;flex-wrap:nowrap;gap:6px;vertical-align:middle;max-width:100%;";
       anchor.parentNode.insertBefore(wrap, anchor);
+      // Score behind the username: leomessi 67
       wrap.appendChild(anchor);
       wrap.appendChild(badge);
       badge.classList.add("veritas-ig-realness--next-to-handle");
+      badge.style.marginLeft = "6px";
+      badge.style.marginRight = "0";
     } else if (insertBadgeBeforeAnchor) {
+      // Kept for X; Instagram uses after-username placement below.
       anchor.insertAdjacentElement("beforebegin", badge);
+      badge.classList.add("veritas-ig-realness--next-to-handle");
+      badge.style.marginLeft = "0";
+      badge.style.marginRight = "6px";
     } else {
       anchor.insertAdjacentElement("afterend", badge);
+      badge.classList.add("veritas-ig-realness--next-to-handle");
+      badge.style.marginLeft = "6px";
+      badge.style.marginRight = "0";
     }
 
     fetchAccountScore(scoreKey)
@@ -1549,8 +1559,66 @@
     return 20;
   }
 
+  /** /username or /username/reels|tagged|… profile surfaces. */
+  function getInstagramProfileHandleFromPath() {
+    const parts = (location.pathname || "").split("/").filter(Boolean);
+    if (!parts.length) return null;
+    const first = parts[0];
+    if (IG_RESERVED.has(first.toLowerCase())) return null;
+    if (!/^[a-zA-Z0-9._]+$/.test(first)) return null;
+    if (parts.length === 1) return first;
+    if (parts.length === 2 && /^(reels|tagged|channel|guides|saved)$/i.test(parts[1])) return first;
+    return null;
+  }
+
+  /** Profile header username node (often a span/h2, not a link). */
+  function findInstagramProfileUsernameNode(handle) {
+    const h = String(handle || "").toLowerCase();
+    if (!h) return null;
+    const nodes = document.querySelectorAll(
+      'header h1, header h2, header span, main header h1, main header h2, main header span, [role="main"] header span, [role="main"] header h2'
+    );
+    let best = null;
+    let bestScore = -1;
+    for (const el of nodes) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (el.closest('nav, [role="navigation"], [role="tablist"]')) continue;
+      if (el.querySelector("img, video")) continue;
+      if (el.querySelector(".veritas-ig-realness")) continue;
+      const ownText = Array.from(el.childNodes)
+        .filter((n) => n.nodeType === Node.TEXT_NODE)
+        .map((n) => String(n.textContent || "").trim())
+        .join("")
+        .toLowerCase();
+      const text = (ownText || String(el.textContent || "").replace(/\s+/g, " ").trim()).toLowerCase();
+      if (text !== h && text !== `@${h}`) continue;
+      // Prefer tight leaf-like nodes (exact username only).
+      if ((el.textContent || "").replace(/\s+/g, " ").trim().length > h.length + 2 && !ownText) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) continue;
+      if (r.top > Math.min(420, window.innerHeight * 0.55)) continue;
+      if (r.left < 100) continue; // skip left rail
+      const score = 2000 - r.top * 2 + r.width;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return best;
+  }
+
   function scanInstagram() {
     injectStyleOnce();
+
+    // Profile pages: pin score directly behind the username (leomessi 67).
+    const profileHandle = getInstagramProfileHandleFromPath();
+    if (profileHandle && !igHandleAlreadyBadgedNear(document.body, profileHandle)) {
+      const uname = findInstagramProfileUsernameNode(profileHandle);
+      if (uname) {
+        attachAccountScoreBadge(uname, profileHandle, false, null, false);
+      }
+    }
+
     const anchors = Array.from(document.querySelectorAll('a[href^="/"], a[href*="instagram.com"]'));
     const candidates = [];
 
@@ -1559,11 +1627,20 @@
       const handle = instagramHandleFromHref(a.getAttribute("href") || "");
       if (!handle) continue;
       if (isLikelyInstagramAvatarLink(a)) continue;
+      if (a.closest('[role="tablist"]')) {
+        a.setAttribute(IG_TAG, "1");
+        continue;
+      }
       if (isInstagramNavChromeLink(a)) {
         a.setAttribute(IG_TAG, "1");
         continue;
       }
       if (isInstagramActionOrWideLink(a)) {
+        a.setAttribute(IG_TAG, "1");
+        continue;
+      }
+      // On a profile page, don't attach to random other links for that same handle.
+      if (profileHandle && handle.toLowerCase() === profileHandle.toLowerCase()) {
         a.setAttribute(IG_TAG, "1");
         continue;
       }
@@ -1584,9 +1661,10 @@
       });
     }
 
-    // Exactly one badge per handle on the page (not per row — avoids sidebar + profile doubles).
+    // Exactly one badge per handle on the page (feed/reels/posts).
     candidates.sort((x, y) => y.score - x.score || x.top - y.top || x.left - y.left);
     const takenHandles = new Set();
+    if (profileHandle) takenHandles.add(profileHandle.toLowerCase());
     for (const c of candidates) {
       const hk = c.handle.toLowerCase();
       if (takenHandles.has(hk)) {
@@ -1599,15 +1677,14 @@
       }
       takenHandles.add(hk);
       c.a.setAttribute(IG_TAG, "1");
-      // Reel wrap only on Reels; profile/feed keep a simple after-username pill.
-      attachAccountScoreBadge(c.a, c.handle, isInstagramReelSurface());
+      // Place score behind the username: handle 67
+      attachAccountScoreBadge(c.a, c.handle, isInstagramReelSurface(), null, false);
     }
 
-    // Remove leftover duplicates for the same handle (keep the best / first remaining).
+    // Remove leftover duplicates / misplaced nav badges.
     const byHandle = new Map();
     document.querySelectorAll(".veritas-ig-realness[data-veritas-score-key]").forEach((b) => {
-      // Drop badges that ended up inside the left nav.
-      if (b.closest('nav, [role="navigation"]')) {
+      if (b.closest('nav, [role="navigation"], [role="tablist"]')) {
         b.remove();
         return;
       }
@@ -1623,11 +1700,10 @@
     });
     for (const group of byHandle.values()) {
       if (group.length < 2) continue;
-      // Keep the one closest to a visible username (highest top-left in main content).
       group.sort((x, y) => {
         const rx = x.getBoundingClientRect();
         const ry = y.getBoundingClientRect();
-        return rx.left - ry.left || rx.top - ry.top;
+        return rx.top - ry.top || rx.left - ry.left;
       });
       for (let i = 1; i < group.length; i++) group[i].remove();
     }
