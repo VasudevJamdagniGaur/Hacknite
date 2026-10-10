@@ -1400,6 +1400,7 @@
     "li:chandan-jha-56a22534": 91,
     "li:ajeeshrawal376": 80,
     "li:shubhagarwal0704": 83,
+    "li:gourav-jaat": 77,
   };
 
   function normalizeScoreHandle(scoreKey) {
@@ -1462,6 +1463,7 @@
     if (bare === "chandan-jha-56a22534") return 91;
     if (bare === "ajeeshrawal376") return 80;
     if (bare === "shubhagarwal0704") return 83;
+    if (bare === "gourav-jaat") return 77;
     if (bare === "helloworldbyprince" || hint.includes("helloworldbyprince")) return 91;
     if (k === "linkedin" || bare === "linkedin") return 99;
     if (bare === "udaysharmaaaaa") return 96;
