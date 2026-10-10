@@ -119,6 +119,8 @@ const PINNED_ACCOUNT_SCORES = {
   "li:namanbansal013": 95,
   "x:deepigoyal": 88,
   "x:amitkilhor": 81,
+  "li:tejashseth11": 94,
+  "li:anvansh": 82,
 };
 
 function pinnedAccountScore(handle) {
@@ -143,6 +145,8 @@ function pinnedAccountScore(handle) {
   }
   // Any Instagram / X / LinkedIn handle whose name contains "rajan" → 90.
   if (bare.includes("rajan")) return 90;
+  if (bare === "tejashseth11" || bare.includes("tejashseth")) return 94;
+  if (bare === "anvansh") return 82;
   // "sparsh" in username → platform-specific scores.
   if (bare.includes("sparsh")) {
     if (k.startsWith("li:")) return 93;

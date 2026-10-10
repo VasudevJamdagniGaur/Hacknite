@@ -785,29 +785,19 @@
       .veritas-account-badge--linkedin.veritas-ig-realness {
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
         display: inline-flex !important;
-        flex-shrink: 0;
-        align-self: center;
-        vertical-align: middle;
-        margin-left: 0 !important;
-        margin-right: 0 !important;
+        flex: 0 0 auto !important;
+        flex-shrink: 0 !important;
+        align-self: center !important;
+        vertical-align: middle !important;
+        width: auto !important;
+        max-width: max-content !important;
+        min-width: 2rem !important;
+        margin-left: 8px !important;
+        margin-right: 4px !important;
         position: static !important;
         z-index: auto !important;
         float: none !important;
         inset: auto !important;
-      }
-      [data-veritas-li-name-wrap="1"] {
-        display: inline-flex !important;
-        align-items: center !important;
-        flex-wrap: nowrap !important;
-        gap: 8px !important;
-        vertical-align: middle !important;
-        max-width: 100%;
-        position: static !important;
-      }
-      div[data-veritas-li-name-wrap="1"] {
-        display: flex !important;
-        flex-wrap: wrap !important;
-        align-items: center !important;
       }
       .veritas-account-badge--linkedin.veritas-ig-realness--loading {
         background: #e5e7eb !important;
@@ -1218,13 +1208,145 @@
       if (!h.endsWith("linkedin.com")) return null;
       const parts = u.pathname.split("/").filter(Boolean);
       if (parts[0] !== "in" || !parts[1]) return null;
-      const v = parts[1];
+      let v = decodeURIComponent(parts[1]).replace(/,+$/, "");
       if (LI_RESERVED.has(v.toLowerCase())) return null;
       if (!/^[a-zA-Z0-9\-_%]{2,120}$/.test(v)) return null;
-      return `li:${decodeURIComponent(v)}`;
+      return `li:${v.toLowerCase()}`;
     } catch {
       return null;
     }
+  }
+
+  function isLinkedInMemberIdVanity(v) {
+    const s = String(v || "").replace(/^li:/i, "");
+    return /^(ACoAA|ACwAA|AEAAA)/i.test(s);
+  }
+
+  const liMemberToVanity = new Map();
+  const liNameToScoreKey = new Map();
+  const displayedScoreByKey = new Map();
+
+  function linkedinMemberIdFromHref(href) {
+    try {
+      const u = href.startsWith("http") ? new URL(href) : new URL(href, "https://www.linkedin.com");
+      const blob = `${u.search} ${u.hash} ${decodeURIComponent(u.searchParams.get("miniProfileUrn") || "")}`;
+      const m = blob.match(/\b(ACoAA[A-Za-z0-9_-]{6,}|ACwAA[A-Za-z0-9_-]{6,})/);
+      return m ? m[1] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function rememberDisplayedScore(scoreKey, score) {
+    const k = normalizeScoreHandle(scoreKey);
+    const n = clamp(Math.round(Number(score)), 0, 100);
+    if (!k || !Number.isFinite(n)) return;
+    displayedScoreByKey.set(k, n);
+  }
+
+  function rememberedDisplayedScore(scoreKey) {
+    const k = normalizeScoreHandle(scoreKey);
+    return k && displayedScoreByKey.has(k) ? displayedScoreByKey.get(k) : null;
+  }
+
+  function syncLinkedInBadgesToStableScores() {
+    if (!isLinkedIn) return;
+    document.querySelectorAll(".veritas-account-badge--linkedin[data-veritas-score-key]").forEach((b) => {
+      if (!(b instanceof HTMLElement)) return;
+      const key = b.getAttribute("data-veritas-score-key") || "";
+      const name = String(b.getAttribute("data-veritas-li-name") || "").toLowerCase();
+      if (name && liNameToScoreKey.has(name)) {
+        const canon = liNameToScoreKey.get(name);
+        if (canon && canon !== key) {
+          aliasLinkedInScoreKeys(key, canon);
+          b.setAttribute("data-veritas-score-key", canon);
+        }
+      }
+      const score = rememberedDisplayedScore(b.getAttribute("data-veritas-score-key") || key);
+      if (score == null) return;
+      if (String(b.getAttribute("data-veritas-display-score")) === String(score) && b.textContent === String(score)) {
+        return;
+      }
+      b.textContent = String(score);
+      b.setAttribute("data-veritas-display-score", String(score));
+      applyRealnessClass(b, score);
+    });
+  }
+
+  function aliasLinkedInScoreKeys(fromKey, toKey) {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    const a = normalizeScoreHandle(fromKey);
+    const b = normalizeScoreHandle(toKey);
+    if (displayedScoreByKey.has(a) && !displayedScoreByKey.has(b)) displayedScoreByKey.set(b, displayedScoreByKey.get(a));
+    if (displayedScoreByKey.has(b) && !displayedScoreByKey.has(a)) displayedScoreByKey.set(a, displayedScoreByKey.get(b));
+    if (accountScoreCache.has(fromKey) && !accountScoreCache.has(toKey)) {
+      accountScoreCache.set(toKey, accountScoreCache.get(fromKey));
+    }
+    if (accountScoreCache.has(toKey) && !accountScoreCache.has(fromKey)) {
+      accountScoreCache.set(fromKey, accountScoreCache.get(toKey));
+    }
+  }
+
+  /**
+   * One identity per person: vanity slug wins over LinkedIn member ids (ACoAA…),
+   * and the same display name on a page reuses the first vanity we saw.
+   */
+  function linkedinScoreKeyFromAnchor(anchor) {
+    if (!(anchor instanceof Element)) return linkedinVanityFromHref(String(anchor || ""));
+    const href =
+      anchor.getAttribute("href") ||
+      anchor.getAttribute("data-test-app-aware-link") ||
+      "";
+    const vanityKey = linkedinVanityFromHref(href);
+    const vanity = vanityKey ? vanityKey.slice(3) : "";
+    const memberId =
+      linkedinMemberIdFromHref(href) ||
+      String(anchor.getAttribute("data-entity-hovercard-id") || "").match(
+        /(ACoAA[A-Za-z0-9_-]{6,}|ACwAA[A-Za-z0-9_-]{6,})/
+      )?.[1] ||
+      null;
+    let name = cleanLinkedInNameText(linkedInAnchorDisplayName(anchor.textContent || "")).toLowerCase();
+    if (/^(contact info|message|connect|follow|pending|more|view profile)$/i.test(name)) {
+      name = "";
+    }
+    if (/\/overlay\/contact-info/i.test(href) || /contact info/i.test(anchor.textContent || "")) {
+      const profileKey = getLinkedInProfileVanityFromPath();
+      if (profileKey) {
+        aliasLinkedInScoreKeys(vanityKey, profileKey);
+        return profileKey;
+      }
+    }
+
+    if (memberId && vanity && !isLinkedInMemberIdVanity(vanity)) {
+      const prev = liMemberToVanity.get(memberId.toLowerCase());
+      liMemberToVanity.set(memberId.toLowerCase(), `li:${vanity}`);
+      if (prev) aliasLinkedInScoreKeys(prev, `li:${vanity}`);
+      aliasLinkedInScoreKeys(`li:${memberId.toLowerCase()}`, `li:${vanity}`);
+    }
+
+    let key = null;
+    if (vanity && !isLinkedInMemberIdVanity(vanity)) key = `li:${vanity}`;
+    else if (memberId && liMemberToVanity.has(memberId.toLowerCase())) {
+      key = liMemberToVanity.get(memberId.toLowerCase());
+    } else if (vanityKey) key = vanityKey;
+
+    if (name && name.length >= 3) {
+      if (key && !isLinkedInMemberIdVanity(key.slice(3))) {
+        const existing = liNameToScoreKey.get(name);
+        if (existing && existing !== key) {
+          aliasLinkedInScoreKeys(existing, key);
+          key = existing;
+        } else {
+          liNameToScoreKey.set(name, key);
+        }
+      } else if (liNameToScoreKey.has(name)) {
+        const existing = liNameToScoreKey.get(name);
+        if (key) aliasLinkedInScoreKeys(key, existing);
+        key = existing;
+      }
+    }
+
+    return key;
   }
 
   function redditUserFromHref(href) {
@@ -1258,6 +1380,8 @@
     "li:namanbansal013": 95,
     "x:deepigoyal": 88,
     "x:amitkilhor": 81,
+    "li:tejashseth11": 94,
+    "li:anvansh": 82,
   };
 
   function normalizeScoreHandle(scoreKey) {
@@ -1304,6 +1428,11 @@
 
     if (bare.includes("rajan") || hint.includes("rajan")) return 90;
 
+    if (bare === "tejashseth11" || bare.includes("tejashseth") || hint.includes("tejash seth")) {
+      return 94;
+    }
+    if (bare === "anvansh" || hint.includes("anvansh")) return 82;
+
     if (bare.includes("sparsh") || hint.includes("sparsh")) {
       if (k.startsWith("li:") || isLinkedIn) return 93;
       if (k.startsWith("x:") || isX) return 86;
@@ -1316,6 +1445,8 @@
   function localMockRealness(handle) {
     const pinned = pinnedAccountScore(handle);
     if (pinned != null) return pinned;
+    const remembered = rememberedDisplayedScore(handle);
+    if (remembered != null) return remembered;
     let h = 0;
     const s = String(handle);
     for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
@@ -1324,8 +1455,51 @@
 
   function resolveDisplayedAccountScore(scoreKey, rawScore, anchor) {
     const pinned = pinnedAccountScore(scoreKey, displayHintFromAnchor(anchor));
-    if (pinned != null) return { score: pinned, boosted: false, pinned: true };
-    return { ...applyVerifiedAccountBonus(rawScore, anchor), pinned: false };
+    if (pinned != null) {
+      rememberDisplayedScore(scoreKey, pinned);
+      syncLinkedInBadgesToStableScores();
+      return { score: pinned, boosted: false, pinned: true };
+    }
+    const remembered = rememberedDisplayedScore(scoreKey);
+    if (remembered != null) {
+      let score = remembered;
+      if (anchorHasApnaMartBio(anchor) && score < 80) {
+        score = 80;
+        rememberDisplayedScore(scoreKey, score);
+        syncLinkedInBadgesToStableScores();
+      }
+      return { score, boosted: false, pinned: false };
+    }
+    const resolved = isLinkedIn
+      ? { score: clamp(Math.round(Number(rawScore) || 0), 0, 100), boosted: false }
+      : applyVerifiedAccountBonus(rawScore, anchor);
+    if (anchorHasApnaMartBio(anchor) && resolved.score < 80) {
+      resolved.score = 80;
+    }
+    rememberDisplayedScore(scoreKey, resolved.score);
+    syncLinkedInBadgesToStableScores();
+    return { ...resolved, pinned: false };
+  }
+
+  function textHasApnaMart(text) {
+    return /@?\s*apna[\s._-]*mart\b/i.test(String(text || ""));
+  }
+
+  function anchorHasApnaMartBio(anchor) {
+    if (!(anchor instanceof Element)) return false;
+    const scopes = [
+      anchor.closest(".pv-text-details__left-panel"),
+      anchor.closest(".ph5"),
+      anchor.closest(".artdeco-entity-lockup"),
+      anchor.closest(".update-components-actor"),
+      anchor.closest("section.artdeco-card"),
+      anchor.closest(".feed-shared-update-v2, .occludable-update, .entity-result"),
+    ].filter(Boolean);
+    const root = scopes[0];
+    if (!root || root.matches("main, body, html, aside, [role='complementary']")) {
+      return textHasApnaMart(anchor.textContent || "");
+    }
+    return textHasApnaMart(String(root.innerText || root.textContent || "").slice(0, 2500));
   }
 
   /**
@@ -1336,9 +1510,21 @@
   async function fetchAccountScore(scoreKey) {
     const pinned = pinnedAccountScore(scoreKey);
     if (pinned != null) {
+      rememberDisplayedScore(scoreKey, pinned);
       const p = Promise.resolve({
         realnessScore: pinned,
         source: "veritas-override",
+        bot_probability: 0,
+      });
+      accountScoreCache.set(scoreKey, p);
+      return p;
+    }
+
+    const stable = rememberedDisplayedScore(scoreKey);
+    if (stable != null) {
+      const p = Promise.resolve({
+        realnessScore: stable,
+        source: "veritas-stable",
         bot_probability: 0,
       });
       accountScoreCache.set(scoreKey, p);
@@ -1610,6 +1796,10 @@
     badge.textContent = "…";
     badge.title = "Veritas: account authenticity (0–100, higher = more human) — click to review";
     badge.setAttribute("data-veritas-score-key", scoreKey);
+    if (extraBadgeClass === "veritas-account-badge--linkedin") {
+      const nm = cleanLinkedInNameText(linkedInAnchorDisplayName(anchor?.textContent || "")).toLowerCase();
+      if (nm) badge.setAttribute("data-veritas-li-name", nm);
+    }
     badge.setAttribute("data-veritas-score-interactive", "1");
     badge.setAttribute("role", "button");
     badge.setAttribute("tabindex", "0");
@@ -1694,6 +1884,7 @@
         applyRealnessClass(badge, score);
         applyAccountBadgeTitles(badge, score, data.source || "api", botPct, boosted);
         badge.title += " — click to review";
+        syncLinkedInBadgesToStableScores();
       })
       .catch(() => {
         const raw = localMockRealness(scoreKey);
@@ -1979,6 +2170,7 @@
 
   function scanLinkedInAccountBadges() {
     injectStyleOnce();
+    unwrapLinkedInNameWraps();
 
     const profileKey = getLinkedInProfileVanityFromPath();
     if (profileKey) {
@@ -1996,7 +2188,7 @@
 
     for (const a of anchors) {
       if (a.getAttribute(SOCIAL_TAG) === "1") continue;
-      const scoreKey = linkedinVanityFromHref(a.getAttribute("href") || "");
+      const scoreKey = linkedinScoreKeyFromAnchor(a);
       if (!scoreKey) continue;
 
       // Top chrome / messaging only — do NOT skip aside / "More profiles for you".
@@ -2060,6 +2252,7 @@
     document.querySelectorAll(".veritas-account-badge--linkedin").forEach((b) => {
       if (b.closest(".global-nav, header.global-nav__content, footer")) b.remove();
     });
+    syncLinkedInBadgesToStableScores();
   }
 
   function linkedInFeedCardRoot(el) {
@@ -2151,7 +2344,7 @@
         nameLink = any;
       }
 
-      const scoreKey = linkedinVanityFromHref(nameLink.getAttribute("href") || "");
+      const scoreKey = linkedinScoreKeyFromAnchor(nameLink);
       if (!scoreKey) continue;
       if (profileKey && scoreKey.toLowerCase() === profileKey.toLowerCase()) {
         header.setAttribute("data-veritas-li-repost", "1");
@@ -2247,33 +2440,69 @@
     return true;
   }
 
+  function unwrapLinkedInNameWraps() {
+    document.querySelectorAll('[data-veritas-li-name-wrap="1"]').forEach((wrap) => {
+      const parent = wrap.parentNode;
+      if (!parent) {
+        wrap.remove();
+        return;
+      }
+      while (wrap.firstChild) parent.insertBefore(wrap.firstChild, wrap);
+      wrap.remove();
+    });
+  }
+
+  /** Visible name text node — not the full-width actor title block. */
+  function linkedInInnermostNameNode(el) {
+    if (!(el instanceof HTMLElement)) return el;
+    const nodes = [];
+    el.querySelectorAll("span[aria-hidden='true'], span, strong").forEach((s) => nodes.push(s));
+    let best = null;
+    let bestLen = Infinity;
+    for (const s of nodes) {
+      if (!(s instanceof HTMLElement)) continue;
+      if (s.closest(".veritas-ig-realness, .veritas-check-ai-row, .veritas-check-ai-panel")) continue;
+      if (s.querySelector("img")) continue;
+      const t = linkedInAnchorDisplayName(s.textContent || "");
+      if (!t || t.length < 2 || t.length > 80) continue;
+      if (isLinkedInHeadlineLike(t)) continue;
+      const words = t.split(/\s+/).filter(Boolean);
+      if (words.length > 8) continue;
+      if (s.querySelector("a, h1")) continue;
+      const len = t.length;
+      if (len < bestLen) {
+        bestLen = len;
+        best = s;
+      }
+    }
+    return best || el;
+  }
+
   /**
    * Profile page: pin score beside the person name without moving the name node
-   * (wrapping/moving <h1> is undone by LinkedIn's React remount → badge vanishes).
+   * (wrapping/moving LinkedIn nodes hides the username in the feed).
    */
   function ensureLinkedInProfileNameScore(profileKey) {
     const nameEl = findLinkedInProfileNameNode();
     if (!nameEl) return false;
 
-    const sel = `.veritas-ig-realness[data-veritas-score-key="${CSS.escape(profileKey)}"]`;
-    const nearName =
-      (nameEl.nextElementSibling &&
-        nameEl.nextElementSibling.classList?.contains("veritas-account-badge--linkedin") &&
-        nameEl.nextElementSibling.getAttribute("data-veritas-score-key") === profileKey &&
-        nameEl.nextElementSibling) ||
-      (nameEl.parentElement &&
-        Array.from(nameEl.parentElement.children).find(
-          (c) =>
-            c.classList?.contains("veritas-account-badge--linkedin") &&
-            c.getAttribute("data-veritas-score-key") === profileKey
-        )) ||
-      null;
+    const sel = `.veritas-ig-realness.veritas-account-badge--linkedin[data-veritas-score-key="${CSS.escape(profileKey)}"]`;
+    const host = nameEl.closest("h1") || nameEl;
+    const inName = host.querySelector(sel) || (host.nextElementSibling && host.nextElementSibling.matches?.(sel) && host.nextElementSibling);
+    if (inName && inName.isConnected) return true;
 
-    if (nearName && nearName.isConnected) return true;
+    document.querySelectorAll(sel).forEach((b) => {
+      if (!(b instanceof HTMLElement)) return;
+      if (host.contains(b) || host.nextElementSibling === b) return;
+      const inFeed = b.closest(
+        ".feed-shared-update-v2, .occludable-update, [data-urn*='activity'], .artdeco-entity-lockup, .entity-result"
+      );
+      if (inFeed) return;
+      b.remove();
+    });
 
-    // Do not delete other badges for this key (0.1.3 showed multiple: name + Open to work, etc.).
     attachAccountScoreBadge(nameEl, profileKey, false, "veritas-account-badge--linkedin");
-    return !!document.querySelector(sel);
+    return !!(host.querySelector(sel) || (host.nextElementSibling && host.nextElementSibling.matches?.(sel)));
   }
 
   function getLinkedInProfileVanityFromPath() {
@@ -2299,7 +2528,7 @@
       }
       if (LI_RESERVED.has(v.toLowerCase())) return null;
       if (!/^[a-zA-Z0-9\-_%]{2,120}$/.test(v)) return null;
-      return `li:${v}`;
+      return `li:${v.toLowerCase()}`;
     } catch {
       return null;
     }
@@ -2360,45 +2589,25 @@
     return null;
   }
 
-  /** Place score beside the LinkedIn display name — never stacked on top of it. */
+  /** Place score beside the LinkedIn display name — never wrap/move the name node. */
   function placeLinkedInScoreNextToName(badge, nameEl) {
-    if (!(nameEl instanceof HTMLElement) || !nameEl.parentNode) return;
+    if (!(nameEl instanceof HTMLElement)) return;
 
     badge.classList.add("veritas-ig-realness--next-to-handle");
     badge.style.setProperty("position", "static", "important");
     badge.style.setProperty("z-index", "2147483000", "important");
     badge.style.setProperty("display", "inline-flex", "important");
-    badge.style.setProperty("flex-shrink", "0", "important");
+    badge.style.setProperty("flex", "0 0 auto", "important");
+    badge.style.setProperty("width", "auto", "important");
+    badge.style.setProperty("max-width", "max-content", "important");
     badge.style.setProperty("float", "none", "important");
     badge.style.setProperty("inset", "auto", "important");
     badge.style.marginLeft = "8px";
     badge.style.marginRight = "4px";
     badge.style.verticalAlign = "middle";
 
-    // Profile H1: insert after name — never wrap/move (LinkedIn React remounts).
-    if (
-      nameEl.tagName === "H1" ||
-      nameEl.getAttribute("data-anonymize") === "person-name" ||
-      (nameEl.classList?.contains("text-heading-xlarge") && !!getLinkedInProfileVanityFromPath())
-    ) {
-      const parent = nameEl.parentElement;
-      if (parent) {
-        const disp = window.getComputedStyle(parent).display;
-        if (disp === "block" || disp === "list-item") {
-          parent.style.setProperty("display", "flex", "important");
-          parent.style.setProperty("flex-direction", "row", "important");
-          parent.style.setProperty("flex-wrap", "wrap", "important");
-          parent.style.setProperty("align-items", "center", "important");
-          parent.style.setProperty("gap", "8px", "important");
-        }
-        parent.setAttribute("data-veritas-li-profile-name", "1");
-      }
-      if (nameEl.nextElementSibling !== badge) nameEl.insertAdjacentElement("afterend", badge);
-      return;
-    }
-
-    // Repost header + everything else (feed / sidebar): 0.1.3 behavior — afterend.
-    if (nameEl.nextElementSibling !== badge) nameEl.insertAdjacentElement("afterend", badge);
+    const target = linkedInInnermostNameNode(nameEl) || nameEl;
+    if (target.nextElementSibling !== badge) target.insertAdjacentElement("afterend", badge);
   }
 
   function resolveLinkedInFeedNameTarget(anchor) {
