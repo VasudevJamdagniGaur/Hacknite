@@ -563,26 +563,32 @@
       }
       .veritas-fc-anchor.veritas-fc-anchor--x-actions .veritas-fc-popover {
         flex: 0 0 100%;
-        width: min(340px, calc(100vw - 20px));
-        max-width: calc(100vw - 20px);
+        width: min(360px, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
       }
       .veritas-fc-anchor.veritas-fc-anchor--x-actions .veritas-x-text-origin-row {
         margin-bottom: 0;
       }
       .veritas-fc-anchor.veritas-fc-anchor--x-actions .veritas-fc-logo-btn {
         padding: 0;
-        width: 30px;
-        height: 30px;
-        min-width: 30px;
-        min-height: 30px;
+        width: 34px;
+        height: 34px;
+        min-width: 34px;
+        min-height: 34px;
         border-radius: 999px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        color: #71767b;
       }
       .veritas-fc-anchor.veritas-fc-anchor--x-actions .veritas-fc-logo-btn:hover:not(:disabled) {
         transform: none;
+        background: rgba(29, 155, 240, 0.1);
+        border: none;
+        color: #1d9bf0;
       }
       .veritas-fc-anchor.veritas-fc-anchor--x-actions .veritas-fc-svg {
         width: 18px;
@@ -634,19 +640,23 @@
         width: 26px;
         height: 28px;
       }
+      /* Fact-check panel — match X Lights Out (black / Chirp-like) */
       .veritas-fc-popover {
         display: none;
-        width: min(340px, calc(100vw - 20px));
-        max-height: min(420px, 70vh);
+        width: min(360px, calc(100vw - 24px));
+        max-height: min(460px, 72vh);
         overflow-y: auto;
-        background: rgba(15, 23, 42, 0.98);
-        border: 1px solid rgba(56, 189, 248, 0.38);
-        border-radius: 14px;
-        padding: 10px 12px;
-        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
-        font-size: 12px;
-        line-height: 1.45;
-        color: #e2e8f0;
+        background: #000000;
+        border: 1px solid #2f3336;
+        border-radius: 16px;
+        padding: 14px 16px 16px;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 12px 40px rgba(0, 0, 0, 0.65);
+        font-family: TwitterChirp, Chirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.4;
+        letter-spacing: -0.01em;
+        color: #e7e9ea;
+        -webkit-font-smoothing: antialiased;
       }
       .veritas-fc-popover.veritas-fc-popover--open {
         display: block;
@@ -654,86 +664,217 @@
       .veritas-fc-topbar {
         display: flex;
         align-items: center;
-        margin: -2px 0 8px;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 0 0 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #2f3336;
       }
       .veritas-fc-back-btn {
         display: inline-flex;
         align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        margin: 0 0 0 -4px;
+        gap: 6px;
+        padding: 6px 12px;
+        margin: 0 0 0 -6px;
         border: none;
-        border-radius: 8px;
+        border-radius: 999px;
         background: transparent;
-        color: #94a3b8;
-        font-size: 12px;
-        font-weight: 600;
+        color: #e7e9ea;
+        font-size: 15px;
+        font-weight: 700;
         font-family: inherit;
         cursor: pointer;
+        transition: background 0.15s ease;
       }
       .veritas-fc-back-btn:hover {
-        color: #e2e8f0;
-        background: rgba(255, 255, 255, 0.06);
+        color: #e7e9ea;
+        background: rgba(239, 243, 244, 0.1);
       }
       .veritas-fc-back-btn:focus-visible {
-        outline: 2px solid #38bdf8;
+        outline: 2px solid #1d9bf0;
         outline-offset: 1px;
       }
       .veritas-factcheck-nature {
-        font-size: 10px;
-        font-weight: 800;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #a5b4fc;
-        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: none;
+        color: #71767b;
+        margin: 0 0 10px;
       }
       .veritas-factcheck-claim {
-        color: #e0f2fe;
-        font-weight: 500;
-        margin-bottom: 8px;
-        line-height: 1.4;
+        color: #e7e9ea;
+        font-size: 15px;
+        font-weight: 400;
+        margin: 0 0 12px;
+        line-height: 1.45;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #2f3336;
       }
       .veritas-factcheck-row {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 10px;
-        margin-bottom: 8px;
+        margin: 0 0 12px;
       }
       .veritas-factcheck-score {
-        font-size: 26px;
-        font-weight: 800;
-        color: #f8fafc;
+        display: none;
+        font-size: 15px;
+        font-weight: 700;
+        color: #71767b;
+      }
+      .veritas-factcheck-score.is-visible {
+        display: inline;
       }
       .veritas-factcheck-verdict {
-        font-size: 11px;
-        font-weight: 800;
-        padding: 4px 10px;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 6px 14px;
         border-radius: 999px;
-        background: rgba(51, 65, 85, 0.9);
-        color: #e2e8f0;
+        background: #16181c;
+        border: 1px solid #2f3336;
+        color: #e7e9ea;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .veritas-factcheck-verdict--true {
+        background: rgba(0, 186, 124, 0.14);
+        border-color: rgba(0, 186, 124, 0.45);
+        color: #00ba7c;
+      }
+      .veritas-factcheck-verdict--false {
+        background: rgba(244, 33, 46, 0.14);
+        border-color: rgba(244, 33, 46, 0.45);
+        color: #f4212e;
+      }
+      .veritas-factcheck-verdict--amber {
+        background: rgba(255, 212, 0, 0.12);
+        border-color: rgba(255, 212, 0, 0.4);
+        color: #ffd400;
+      }
+      .veritas-factcheck-verdict--neutral {
+        background: #16181c;
+        border-color: #2f3336;
+        color: #e7e9ea;
+      }
+      .veritas-factcheck-meta {
+        font-size: 13px;
+        color: #71767b;
+        margin: 0 0 14px;
+        line-height: 1.4;
+      }
+      .veritas-factcheck-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 4px;
+        padding-top: 12px;
+        border-top: 1px solid #2f3336;
+      }
+      .veritas-factcheck-actions button {
+        appearance: none;
+        border: 1px solid #536471;
+        background: transparent;
+        color: #e7e9ea;
+        border-radius: 999px;
+        padding: 8px 18px;
+        font-size: 14px;
+        font-weight: 700;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .veritas-factcheck-actions button:hover {
+        background: rgba(239, 243, 244, 0.1);
+        border-color: #e7e9ea;
+      }
+      .veritas-factcheck-actions button.veritas-factcheck-primary {
+        background: #eff3f4;
+        border-color: #eff3f4;
+        color: #0f1419;
+      }
+      .veritas-factcheck-actions button.veritas-factcheck-primary:hover {
+        background: #e7e9ea;
+        border-color: #e7e9ea;
+      }
+      .veritas-x-factcheck-root {
+        position: absolute;
+        top: 6px;
+        right: 64px;
+        z-index: 2147483630;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+        pointer-events: none;
+      }
+      .veritas-x-factcheck-root > * {
+        pointer-events: auto;
+      }
+      .veritas-x-factcheck-btn {
+        appearance: none;
+        width: 34px;
+        height: 34px;
+        min-width: 34px;
+        min-height: 34px;
+        padding: 0;
+        margin: 0;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        line-height: 0;
+        background: transparent;
+        border: none;
+        color: #71767b;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .veritas-x-factcheck-btn:hover:not(:disabled) {
+        background: rgba(29, 155, 240, 0.1);
+        color: #1d9bf0;
+      }
+      .veritas-x-factcheck-btn:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .veritas-x-factcheck-btn svg {
+        display: block;
+        width: 18px;
+        height: 18px;
       }
       .veritas-factcheck-expl {
-        margin: 0 0 8px;
-        color: #cbd5e1;
+        margin: 0 0 12px;
+        color: #e7e9ea;
+        font-size: 15px;
+        font-weight: 400;
+        line-height: 1.45;
       }
       .veritas-factcheck-sources {
-        font-size: 10px;
-        color: #94a3b8;
-        margin-bottom: 6px;
+        font-size: 13px;
+        color: #71767b;
+        margin-bottom: 8px;
       }
       .veritas-factcheck-links a {
-        color: #7dd3fc;
+        color: #1d9bf0;
         display: block;
-        margin-top: 4px;
-        word-break: break-all;
+        margin-top: 6px;
+        font-size: 14px;
+        text-decoration: none;
+        word-break: break-word;
+      }
+      .veritas-factcheck-links a:hover {
+        text-decoration: underline;
       }
       .veritas-factcheck-err {
-        color: #fecaca;
+        color: #f4212e;
+        font-size: 15px;
       }
       .veritas-factcheck-loading {
-        color: #94a3b8;
-        font-style: italic;
+        color: #71767b;
+        font-style: normal;
+        font-size: 15px;
       }
 
       /* Account authenticity pill (Instagram, X, LinkedIn, Reddit, …) */
@@ -4063,13 +4204,277 @@
   }
 
   function ensureFactCheckLogoOnPost(articleEl) {
-    // Fact-check post button removed everywhere — strip any leftover UI.
+    // Legacy fact-check logo removed — strip leftovers, but keep the X Fact Check control.
     if (!articleEl) return;
     articleEl
       .querySelectorAll(
-        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor, .veritas-fc-popover, .veritas-fc-logo-btn"
+        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor:not(.veritas-x-factcheck-root), .veritas-fc-logo-btn"
       )
-      .forEach((n) => n.remove());
+      .forEach((n) => {
+        if (n.closest(".veritas-x-factcheck-root")) return;
+        n.remove();
+      });
+  }
+
+  function factCheckIconSvg() {
+    return (
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9 11l2 2 4-4"/>' +
+      '<path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 22c5-3 8-6.5 8-11V6l-8-3-8 3v5c0 4.5 3 8 8 11z"/>' +
+      "</svg>"
+    );
+  }
+
+  function extractStatementForFactCheck(postEl) {
+    const text = postTextFromElement(postEl);
+    return String(text || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 4000);
+  }
+
+  function verdictToneClass(verdict) {
+    const v = String(verdict || "").toUpperCase();
+    if (v.includes("LIKELY TRUE")) return "veritas-factcheck-verdict--true";
+    if (v.includes("LIKELY FALSE")) return "veritas-factcheck-verdict--false";
+    if (v.includes("MISLEADING") || v.includes("UNVERIFIED")) return "veritas-factcheck-verdict--amber";
+    return "veritas-factcheck-verdict--neutral";
+  }
+
+  /** X-style sentence case for API ALL-CAPS verdicts / labels. */
+  function formatFactCheckLabel(raw, fallback) {
+    const s = String(raw || fallback || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (!s) return String(fallback || "");
+    const lower = s.toLowerCase();
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }
+
+  async function factCheckChatClient(statement) {
+    const bg = await sendMessageToExtension({
+      type: "VERITAS_FACT_CHECK_CHAT",
+      text: statement,
+    });
+    if (bg && bg.ok === true && bg.data) return bg.data;
+    throw new Error(formatExtensionMessagingError(bg?.error || "Fact check failed"));
+  }
+
+  function renderSociteaFactCheckResult(panel, data, onRetry) {
+    if (panel.dataset.veritasFactCheckDismissed === "1") return;
+    panel.textContent = "";
+    panel.appendChild(buildFactCheckTopBar(panel, "Veritas"));
+
+    const natureEl = document.createElement("div");
+    natureEl.className = "veritas-factcheck-nature";
+    natureEl.textContent = formatFactCheckLabel(
+      data.assessmentType,
+      "Preliminary AI assessment"
+    );
+
+    const claimEl = document.createElement("div");
+    claimEl.className = "veritas-factcheck-claim";
+    claimEl.textContent = String(data.statement || "");
+
+    const row = document.createElement("div");
+    row.className = "veritas-factcheck-row";
+    const conf = data.confidence;
+    const hasConf = conf != null && Number.isFinite(Number(conf));
+    if (hasConf) {
+      const scoreEl = document.createElement("span");
+      scoreEl.className = "veritas-factcheck-score is-visible";
+      scoreEl.textContent = `${Math.round(Number(conf))}% confidence`;
+      row.appendChild(scoreEl);
+    }
+    const verEl = document.createElement("span");
+    verEl.className = `veritas-factcheck-verdict ${verdictToneClass(data.verdict)}`;
+    verEl.textContent = formatFactCheckLabel(data.verdict, "Unverified");
+    row.appendChild(verEl);
+
+    const explP = document.createElement("p");
+    explP.className = "veritas-factcheck-expl";
+    explP.textContent = String(data.explanation || "No explanation returned.");
+
+    const meta = document.createElement("div");
+    meta.className = "veritas-factcheck-meta";
+    meta.textContent =
+      "This is a preliminary AI assessment via SociTea, not a fully verified newsroom fact-check. " +
+      "Do not treat the model alone as proof.";
+
+    panel.appendChild(natureEl);
+    panel.appendChild(claimEl);
+    panel.appendChild(row);
+    panel.appendChild(explP);
+    if (data.missingContext) {
+      const miss = document.createElement("p");
+      miss.className = "veritas-factcheck-expl";
+      miss.textContent = `Missing context: ${data.missingContext}`;
+      panel.appendChild(miss);
+    }
+    panel.appendChild(meta);
+
+    const evidence = Array.isArray(data.evidence) ? data.evidence : [];
+    const linkWrap = document.createElement("div");
+    linkWrap.className = "veritas-factcheck-links";
+    for (const s of evidence.slice(0, 5)) {
+      const u = String(s.url || "").trim();
+      if (!/^https?:\/\//i.test(u)) continue;
+      const a = document.createElement("a");
+      a.href = u;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = String(s.title || "Source");
+      linkWrap.appendChild(a);
+    }
+    if (linkWrap.childElementCount) panel.appendChild(linkWrap);
+
+    const actions = document.createElement("div");
+    actions.className = "veritas-factcheck-actions";
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "veritas-factcheck-primary";
+    retry.textContent = "Check again";
+    retry.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof onRetry === "function") onRetry();
+    });
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const blob = [
+        `Statement: ${data.statement || ""}`,
+        `Verdict: ${formatFactCheckLabel(data.verdict, "")}`,
+        hasConf ? `Confidence: ${Math.round(Number(conf))}%` : null,
+        `Explanation: ${data.explanation || ""}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      try {
+        await navigator.clipboard.writeText(blob);
+        copyBtn.textContent = "Copied";
+        setTimeout(() => {
+          copyBtn.textContent = "Copy";
+        }, 1200);
+      } catch {
+        copyBtn.textContent = "Copy failed";
+      }
+    });
+    actions.appendChild(retry);
+    actions.appendChild(copyBtn);
+    panel.appendChild(actions);
+  }
+
+  function ensureXFactCheckControl(postEl) {
+    if (!isX || !(postEl instanceof HTMLElement)) return null;
+    const style = window.getComputedStyle(postEl);
+    if (style.position === "static") postEl.style.position = "relative";
+
+    let root = postEl.querySelector(".veritas-x-factcheck-root");
+    if (!root) {
+      root = document.createElement("div");
+      root.className = "veritas-x-factcheck-root veritas-fc-anchor veritas-fc-anchor--x-actions";
+      root.setAttribute("data-veritas-x-factcheck", "1");
+      postEl.appendChild(root);
+    }
+
+    let btn = root.querySelector(".veritas-x-factcheck-btn");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "veritas-x-factcheck-btn";
+      btn.title = "Fact Check";
+      btn.setAttribute("aria-label", "Fact Check");
+      btn.innerHTML = factCheckIconSvg();
+      root.appendChild(btn);
+    }
+
+    let panel = root.querySelector(".veritas-fc-popover");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.className = "veritas-fc-popover";
+      panel.setAttribute("data-veritas-x-factcheck-panel", "1");
+      root.appendChild(panel);
+    }
+
+    if (btn.dataset.veritasFcBound !== "1") {
+      btn.dataset.veritasFcBound = "1";
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        runXFactCheckForPost(postEl, btn, panel);
+      });
+    }
+    return { root, btn, panel };
+  }
+
+  async function runXFactCheckForPost(postEl, btn, panel) {
+    if (!btn || !panel || btn.disabled) return;
+    if (panel.classList.contains("veritas-fc-popover--open") && panel.dataset.veritasFcLoaded === "1") {
+      panel.classList.remove("veritas-fc-popover--open");
+      return;
+    }
+
+    const statement = extractStatementForFactCheck(postEl);
+    delete panel.dataset.veritasFactCheckDismissed;
+    panel.classList.add("veritas-fc-popover--open");
+    panel.dataset.veritasFcLoaded = "0";
+
+    if (statement.length < 8) {
+      panel.textContent = "";
+      panel.appendChild(buildFactCheckTopBar(panel, "Veritas"));
+      const p = document.createElement("p");
+      p.className = "veritas-factcheck-expl";
+      p.textContent = "Enter or open a post with a clear statement to fact-check.";
+      panel.appendChild(p);
+      return;
+    }
+
+    btn.disabled = true;
+    panel.textContent = "";
+    panel.appendChild(buildFactCheckTopBar(panel, "Veritas"));
+    const loading = document.createElement("div");
+    loading.className = "veritas-factcheck-loading";
+    loading.textContent = "Checking this post…";
+    panel.appendChild(loading);
+
+    try {
+      const data = await factCheckChatClient(statement);
+      if (panel.dataset.veritasFactCheckDismissed === "1") return;
+      renderSociteaFactCheckResult(panel, data, () => runXFactCheckForPost(postEl, btn, panel));
+      panel.dataset.veritasFcLoaded = "1";
+    } catch (e) {
+      if (panel.dataset.veritasFactCheckDismissed === "1") return;
+      panel.textContent = "";
+      panel.appendChild(buildFactCheckTopBar(panel, "Veritas"));
+      const err = document.createElement("div");
+      err.className = "veritas-factcheck-err";
+      err.textContent = String(e?.message || e || "Fact check failed");
+      panel.appendChild(err);
+      const actions = document.createElement("div");
+      actions.className = "veritas-factcheck-actions";
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "veritas-factcheck-primary";
+      retry.textContent = "Try again";
+      retry.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        runXFactCheckForPost(postEl, btn, panel);
+      });
+      actions.appendChild(retry);
+      panel.appendChild(actions);
+      try {
+        console.warn("[Veritas] Fact check failed:", String(e?.message || e));
+      } catch {
+        /* ignore */
+      }
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function escapeHtml(s) {
@@ -4086,7 +4491,7 @@
     return s && s.matches && s.matches(".veritas-fc-logo-btn") ? s : null;
   }
 
-  function buildFactCheckTopBar(panel) {
+  function buildFactCheckTopBar(panel, title) {
     const wrap = document.createElement("div");
     wrap.className = "veritas-fc-topbar";
     const back = document.createElement("button");
@@ -4105,6 +4510,13 @@
       if (logo) logo.disabled = false;
     });
     wrap.appendChild(back);
+    if (title) {
+      const titleEl = document.createElement("span");
+      titleEl.className = "veritas-factcheck-nature";
+      titleEl.style.margin = "0";
+      titleEl.textContent = String(title);
+      wrap.appendChild(titleEl);
+    }
     return wrap;
   }
 
@@ -4207,10 +4619,9 @@
       );
     }
 
-    /** X: AI tick on the post toolbar (fact-check logo removed). */
-    let xOriginContainer = host;
+    /** X: top-right Fact Check → SociTea /generateContent (True/False style verdicts). */
     if (isX) {
-      mountXTextOriginRow(xOriginContainer);
+      ensureXFactCheckControl(el);
     }
 
     const text = postTextFromElement(el);
@@ -4220,25 +4631,27 @@
       const result = await analyze(text);
       const card = renderCard(result);
       if (isX) {
+        // Keep AI/human credibility card available but collapsed; Fact Check owns the top-right click.
         card.classList.add("veritas-card--x-hidden");
         card.setAttribute("data-veritas-x-score-card", "1");
-        setXTextOriginFromResult(xOriginContainer, result, card);
       }
       host.appendChild(card);
     } catch {
-      if (isX) setXTextOriginError(xOriginContainer);
-      /* backend down */
+      /* backend down — Fact Check button still works via SociTea */
     }
   }
 
   function scanFeed() {
     injectStyleOnce();
-    // Remove fact-check post button everywhere (legacy injections).
+    // Remove legacy fact-check logo injections — keep X Fact Check control.
     document
       .querySelectorAll(
-        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor, .veritas-fc-popover, .veritas-fc-logo-btn"
+        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-logo-btn, .veritas-fc-anchor:not(.veritas-x-factcheck-root)"
       )
-      .forEach((n) => n.remove());
+      .forEach((n) => {
+        if (n.closest(".veritas-x-factcheck-root")) return;
+        n.remove();
+      });
     if (!isInstagram) {
       // Check AI must never appear outside Instagram.
       document
@@ -4547,10 +4960,10 @@
     if (panel.dataset.veritasFactCheckDismissed === "1") return;
     const score = clamp(Math.round(Number(data.truthScore)), 0, 100);
     panel.textContent = "";
-    panel.appendChild(buildFactCheckTopBar(panel));
+    panel.appendChild(buildFactCheckTopBar(panel, "Veritas"));
     const natureEl = document.createElement("div");
     natureEl.className = "veritas-factcheck-nature";
-    natureEl.textContent = String(data.contentLabel || "Context");
+    natureEl.textContent = formatFactCheckLabel(data.contentLabel, "Context");
     const claimEl = document.createElement("div");
     claimEl.className = "veritas-factcheck-claim";
     claimEl.textContent = String(data.mainClaim || "");
@@ -4558,13 +4971,13 @@
     const row = document.createElement("div");
     row.className = "veritas-factcheck-row";
     const scoreEl = document.createElement("span");
-    scoreEl.className = "veritas-factcheck-score";
-    scoreEl.textContent = String(score);
+    scoreEl.className = "veritas-factcheck-score is-visible";
+    scoreEl.textContent = `${score}%`;
     const verEl = document.createElement("span");
-    verEl.className = "veritas-factcheck-verdict";
-    verEl.textContent = String(data.verdict || "Unverified");
-    row.appendChild(scoreEl);
+    verEl.className = `veritas-factcheck-verdict ${verdictToneClass(data.verdict)}`;
+    verEl.textContent = formatFactCheckLabel(data.verdict, "Unverified");
     row.appendChild(verEl);
+    row.appendChild(scoreEl);
 
     const explP = document.createElement("p");
     explP.className = "veritas-factcheck-expl";

@@ -17,9 +17,10 @@ const LOCAL_AGENT_URLS = [
   "http://127.0.0.1:5060",
   "http://localhost:5060",
 ];
-/** Socitea Gemini vision backend (see GET /health). */
+/** Socitea Gemini backend (see GET /health). */
 const SOCITEA_BASE_URL = "https://socitea.onrender.com";
 const SOCITEA_CHAT_URL = `${SOCITEA_BASE_URL}/chat`;
+const SOCITEA_GENERATE_URL = `${SOCITEA_BASE_URL}/generateContent`;
 const SOCITEA_HEALTH_URL = `${SOCITEA_BASE_URL}/health`;
 
 function sleepMs(ms) {
@@ -577,6 +578,167 @@ function factCheckViaApi(payload) {
     });
 }
 
+const FACTCHECK_VERDICTS = new Set([
+  "LIKELY TRUE",
+  "LIKELY FALSE",
+  "MISLEADING",
+  "UNVERIFIED",
+  "OPINION",
+]);
+
+function normalizeFactCheckVerdict(raw) {
+  const s = String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+  if (FACTCHECK_VERDICTS.has(s)) return s;
+  if (/^TRUE\b/.test(s) || s.includes("LIKELY TRUE")) return "LIKELY TRUE";
+  if (/^FALSE\b/.test(s) || s.includes("LIKELY FALSE")) return "LIKELY FALSE";
+  if (s.includes("MISLEAD")) return "MISLEADING";
+  if (s.includes("OPINION") || s.includes("SUBJECTIVE")) return "OPINION";
+  return "UNVERIFIED";
+}
+
+function extractSociteaGenerateText(data) {
+  const parts = data?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    const texts = parts.map((p) => String(p?.text || "").trim()).filter(Boolean);
+    if (texts.length) return texts.join("\n");
+  }
+  if (typeof data?.reply === "string") return data.reply;
+  if (typeof data?.text === "string") return data.text;
+  return "";
+}
+
+function parseFactCheckJsonFromModelText(rawText, fallbackStatement) {
+  const text = String(rawText || "").trim();
+  if (!text) throw new Error("Empty fact-check reply from SociTea");
+
+  let obj = null;
+  try {
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const raw = fence ? fence[1].trim() : text;
+    obj = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
+  } catch {
+    obj = null;
+  }
+
+  if (!obj || typeof obj !== "object") {
+    return {
+      statement: String(fallbackStatement || "").trim(),
+      verdict: "UNVERIFIED",
+      confidence: null,
+      explanation: text.slice(0, 800),
+      evidence: [],
+      missingContext: "",
+      assessmentType: "preliminary AI assessment",
+      source: "socitea-generateContent",
+    };
+  }
+
+  const evidence = Array.isArray(obj.evidence)
+    ? obj.evidence
+        .map((e) => ({
+          title: String(e?.title || e?.outlet || "Source").trim(),
+          url: String(e?.url || "").trim(),
+        }))
+        .filter((e) => /^https?:\/\//i.test(e.url))
+    : [];
+
+  let confidence = obj.confidence;
+  if (confidence != null) {
+    const n = Number(confidence);
+    confidence = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+  } else {
+    confidence = null;
+  }
+
+  return {
+    statement: String(obj.statement || fallbackStatement || "").trim(),
+    verdict: normalizeFactCheckVerdict(obj.verdict),
+    confidence,
+    explanation: String(obj.explanation || "").trim(),
+    evidence,
+    missingContext: String(obj.missingContext || obj.missing_context || "").trim(),
+    assessmentType: String(obj.assessmentType || "preliminary AI assessment").trim(),
+    source: "socitea-generateContent",
+  };
+}
+
+/**
+ * Fact-check a statement via SociTea POST /generateContent { prompt }.
+ * Returns a structured preliminary AI assessment (not live web research).
+ */
+function factCheckViaSociteaGenerateContent(statement) {
+  return (async () => {
+    const claim = String(statement || "").replace(/\s+/g, " ").trim();
+    if (claim.length < 8) throw new Error("No suitable statement to fact-check");
+
+    const prompt =
+      "You are a careful fact-checking assistant for Veritas. Analyze the STATEMENT for factual accuracy. " +
+      "Do NOT rewrite it as social content. Do NOT invent citations, URLs, or evidence. " +
+      "If you cannot verify with known reliable knowledge, use UNVERIFIED. " +
+      "Never mark something FALSE only because you are unsure. " +
+      "Reply with ONLY valid JSON (no markdown fences) using this exact schema:\n" +
+      '{"statement":"exact statement","verdict":"LIKELY TRUE|LIKELY FALSE|MISLEADING|UNVERIFIED|OPINION",' +
+      '"confidence":null,"explanation":"2-4 sentences","evidence":[],"missingContext":"",' +
+      '"assessmentType":"preliminary AI assessment"}\n' +
+      "confidence must be null unless you can give a meaningful 0-100 value; prefer null. " +
+      "evidence must be an array of {title,url} with real https URLs only, else [].\n\n" +
+      "STATEMENT:\n" +
+      claim;
+
+    const bodyJson = JSON.stringify({ prompt });
+    let lastErr = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await wakeSocitea();
+        if (attempt > 1) await sleepMs(1500 * attempt);
+
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 90000);
+        let resp;
+        let text;
+        try {
+          resp = await fetch(SOCITEA_GENERATE_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: bodyJson,
+            signal: ctrl.signal,
+            cache: "no-store",
+          });
+          text = await resp.text();
+        } finally {
+          clearTimeout(tid);
+        }
+
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error(`SociTea /generateContent returned non-JSON (HTTP ${resp.status})`);
+        }
+        if (!resp.ok) {
+          throw new Error(
+            (data && (data.error || data.details || data.message)) ||
+              `SociTea /generateContent HTTP ${resp.status}`
+          );
+        }
+
+        const modelText = extractSociteaGenerateText(data);
+        return parseFactCheckJsonFromModelText(modelText, claim);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    throw new Error(
+      String(lastErr?.message || lastErr || "SociTea fact-check request failed")
+    );
+  })();
+}
+
 function amazonReviewTrustViaApi(reviewsText) {
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 90000);
@@ -1019,6 +1181,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (t === "VERITAS_FACT_CHECK" && typeof msg.text === "string" && msg.text.length >= 40) {
     factCheckViaApi({ text: msg.text, url: msg.url, title: msg.title })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (t === "VERITAS_FACT_CHECK_CHAT" && typeof msg.text === "string" && msg.text.trim().length >= 8) {
+    factCheckViaSociteaGenerateContent(msg.text)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
