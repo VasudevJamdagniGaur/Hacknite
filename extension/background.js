@@ -128,6 +128,8 @@ const PINNED_ACCOUNT_SCORES = {
   "x:pradeepto_src": 79,
   "x:namespaceworld": 79,
   namespaceworld: 79,
+  "x:udaysharmatech": 92,
+  "x:hackshastra": 81,
   "li:tejashseth11": 94,
   "li:anvansh": 82,
   "li:kaif-beg-49186b281": 73,
@@ -157,6 +159,8 @@ function pinnedAccountScore(handle) {
   if (k.startsWith("x:") && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
   if (k.startsWith("x:") && (bare === "pradeepto_src" || bare.includes("pradeepto_src"))) return 79;
   if (bare === "namespaceworld" || bare.includes("namespaceworld")) return 79;
+  if (k.startsWith("x:") && (bare === "udaysharmatech" || bare.includes("udaysharmatech"))) return 92;
+  if (k.startsWith("x:") && (bare === "hackshastra" || bare.includes("hackshastra"))) return 81;
   if (
     k.startsWith("x:") &&
     (bare.includes("amitkilhor") ||

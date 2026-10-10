@@ -1002,7 +1002,7 @@
       const seg = parts[0];
       if (X_RESERVED.has(seg.toLowerCase())) return null;
       if (!/^[a-zA-Z0-9_]{1,30}$/.test(seg)) return null;
-      return `x:${seg.toLowerCase()}`;
+      return `x:${seg}`;
     } catch {
       return null;
     }
@@ -1195,12 +1195,9 @@
    * Place X score on the same line as the name — after the blue tick when present:
    *   daksh.  ✓  [61]  @handle
    * Falls back to after the display name (still inline), never a new row below.
+   * Bio / description @mentions must stay next to the mention — never hoist into the header name.
    */
   function placeXScoreBetweenNameAndTick(badge, anchor) {
-    const displayLink = findXDisplayNameLink(anchor);
-    const tick = findXVerifiedTickNear(displayLink);
-    const row = findXNameTickRow(displayLink, tick);
-
     badge.classList.add("veritas-ig-realness--next-to-handle");
     badge.style.display = "inline-flex";
     badge.style.flexShrink = "0";
@@ -1208,6 +1205,26 @@
     badge.style.verticalAlign = "middle";
     badge.style.marginLeft = "4px";
     badge.style.marginRight = "4px";
+
+    const inNameRow = !!anchor.closest(
+      '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="User-Names"]'
+    );
+    const inBio =
+      !!anchor.closest('[data-testid="UserDescription"]') ||
+      (!!anchor.closest('[data-testid="primaryColumn"]') &&
+        !inNameRow &&
+        !anchor.closest('[data-testid="tweet"]') &&
+        !anchor.closest('[data-testid="UserCell"]'));
+
+    // Mentions in the profile bio (and other non-name chrome): pin beside the mention only.
+    if (inBio || (!inNameRow && !anchor.closest('[data-testid="tweet"]') && !anchor.closest('[data-testid="UserCell"]'))) {
+      if (anchor.nextElementSibling !== badge) anchor.insertAdjacentElement("afterend", badge);
+      return anchor;
+    }
+
+    const displayLink = findXDisplayNameLink(anchor);
+    const tick = findXVerifiedTickNear(displayLink);
+    const row = findXNameTickRow(displayLink, tick);
 
     if (tick && tick.parentNode) {
       // After blue tick, same row.
@@ -1286,14 +1303,7 @@
 
   function rememberedDisplayedScore(scoreKey) {
     const k = normalizeScoreHandle(scoreKey);
-    if (!k) return null;
-    // Overrides always win over a previously cached non-override score.
-    const pinned = pinnedAccountScore(k);
-    if (pinned != null) {
-      displayedScoreByKey.set(k, pinned);
-      return pinned;
-    }
-    return displayedScoreByKey.has(k) ? displayedScoreByKey.get(k) : null;
+    return k && displayedScoreByKey.has(k) ? displayedScoreByKey.get(k) : null;
   }
 
   function syncLinkedInBadgesToStableScores() {
@@ -1436,6 +1446,8 @@
     "x:pradeepto_src": 79,
     "x:namespaceworld": 79,
     namespaceworld: 79,
+    "x:udaysharmatech": 92,
+    "x:hackshastra": 81,
     "li:tejashseth11": 94,
     "li:anvansh": 82,
     "li:kaif-beg-49186b281": 73,
@@ -1485,6 +1497,8 @@
     if (onX && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
     if (onX && (bare === "pradeepto_src" || bare.includes("pradeepto_src") || hint.includes("pradeepto"))) return 79;
     if (bare === "namespaceworld" || bare.includes("namespaceworld") || (onX && hint.includes("namespaceworld"))) return 79;
+    if (onX && (bare === "udaysharmatech" || bare.includes("udaysharmatech"))) return 92;
+    if (onX && (bare === "hackshastra" || bare.includes("hackshastra"))) return 81;
     if (
       onX &&
       (bare.includes("amitkilhor") ||
@@ -1887,37 +1901,12 @@
   }
 
   function attachAccountScoreBadge(anchor, scoreKey, useReelWrap, extraBadgeClass, insertBadgeBeforeAnchor) {
-    const key = normalizeScoreHandle(scoreKey) || scoreKey;
-    // Never stack a second X badge for the same account in the same local name row.
-    if (extraBadgeClass === "veritas-account-badge--x" && anchor instanceof Element) {
-      const row =
-        anchor.closest('[data-testid="User-Name"], [data-testid="UserName"], [data-testid="User-Names"], [data-testid="UserCell"], [data-testid="tweet"]') ||
-        anchor.parentElement;
-      const existing = row?.querySelector?.(
-        `.veritas-account-badge--x[data-veritas-score-key="${CSS.escape(key)}"], .veritas-account-badge--x[data-veritas-score-key="${CSS.escape(scoreKey)}"]`
-      );
-      if (existing) {
-        const pinned = pinnedAccountScore(key);
-        if (pinned != null) {
-          rememberDisplayedScore(key, pinned);
-          existing.textContent = String(pinned);
-          existing.setAttribute("data-veritas-display-score", String(pinned));
-          existing.setAttribute("data-veritas-score-key", key);
-          existing.classList.remove("veritas-ig-realness--loading");
-          applyRealnessClass(existing, pinned);
-          existing.title = `Veritas: ${pinned}/100 (override) — click to review`;
-        }
-        return existing;
-      }
-    }
-
     const badge = document.createElement("span");
     badge.className = "veritas-ig-realness veritas-ig-realness--loading";
     if (extraBadgeClass) badge.classList.add(extraBadgeClass);
     badge.textContent = "…";
     badge.title = "Veritas: account authenticity (0–100, higher = more human) — click to review";
-    badge.setAttribute("data-veritas-score-key", key);
-    scoreKey = key;
+    badge.setAttribute("data-veritas-score-key", scoreKey);
     if (extraBadgeClass === "veritas-account-badge--linkedin") {
       const nm = cleanLinkedInNameText(linkedInAnchorDisplayName(anchor?.textContent || "")).toLowerCase();
       if (nm) badge.setAttribute("data-veritas-li-name", nm);
@@ -2263,103 +2252,82 @@
     return root;
   }
 
-  function xHeaderNameHosts() {
-    const col = document.querySelector('[data-testid="primaryColumn"]') || document;
-    return Array.from(
-      col.querySelectorAll('[data-testid="UserName"], [data-testid="User-Name"], [data-testid="User-Names"]')
-    ).filter((el) => !el.closest('[data-testid="tweet"]') && !el.closest('[data-testid="UserCell"]'));
+  function getXProfileHeaderNameHost() {
+    const nameEl = findXProfileHeaderNameNode();
+    if (!nameEl) return null;
+    return (
+      nameEl.closest('[data-testid="UserName"], [data-testid="User-Name"], [data-testid="User-Names"]') ||
+      nameEl
+    );
   }
 
-  /** Keep a single header badge for the profile owner; override/pin wins. */
-  function dedupeXProfileHeaderBadges(profileKey) {
-    if (!profileKey) return;
-    const hosts = xHeaderNameHosts();
-    const pinned = pinnedAccountScore(profileKey);
-    if (pinned != null) rememberDisplayedScore(profileKey, pinned);
-
-    const inHeader = [];
-    hosts.forEach((host) => {
-      host.querySelectorAll(".veritas-account-badge--x, .veritas-ig-realness[data-veritas-score-key]").forEach((b) => {
-        if (!(b instanceof HTMLElement)) return;
-        inHeader.push(b);
+  /** Keep exactly one score next to the profile display name (owner key only). */
+  function dedupeXProfileHeaderNameBadges(profileKey) {
+    const host = getXProfileHeaderNameHost();
+    if (!host || !profileKey) return;
+    const key = String(profileKey).toLowerCase();
+    const badges = Array.from(host.querySelectorAll(".veritas-account-badge--x, .veritas-ig-realness"));
+    // Also catch badges inserted as siblings just outside the host but still under the profile header.
+    let n = host.parentElement;
+    for (let i = 0; i < 3 && n; i++) {
+      Array.from(n.children || []).forEach((c) => {
+        if (c.classList?.contains("veritas-account-badge--x") || c.classList?.contains("veritas-ig-realness")) {
+          if (!badges.includes(c)) badges.push(c);
+        }
       });
-    });
-    // Also catch badges inserted as siblings just outside the name node but still in the header band.
-    hosts.forEach((host) => {
-      let n = host.parentElement;
-      for (let i = 0; i < 3 && n; i++) {
-        n.querySelectorAll?.(".veritas-account-badge--x").forEach((b) => {
-          if (!(b instanceof HTMLElement)) return;
-          if (b.closest('[data-testid="tweet"], [data-testid="UserCell"]')) return;
-          if (!inHeader.includes(b)) inHeader.push(b);
-        });
-        n = n.parentElement;
-      }
-    });
-
-    const forOwner = inHeader.filter((b) => {
-      const k = normalizeScoreHandle(b.getAttribute("data-veritas-score-key") || "");
-      return k === normalizeScoreHandle(profileKey);
-    });
-    // Any extra badge sitting in the profile header name area (wrong key or duplicate) — keep one owner badge.
-    const extras = inHeader.filter((b) => !forOwner.includes(b));
-    extras.forEach((b) => b.remove());
-
-    if (forOwner.length <= 1) {
-      const only = forOwner[0];
-      if (only && pinned != null) {
-        only.textContent = String(pinned);
-        only.setAttribute("data-veritas-display-score", String(pinned));
-        only.setAttribute("data-veritas-score-key", profileKey);
-        only.classList.remove("veritas-ig-realness--loading");
-        applyRealnessClass(only, pinned);
-        only.title = `Veritas: ${pinned}/100 (override) — click to review`;
-      }
-      return only || null;
+      n = n.parentElement;
     }
 
-    // Prefer a badge that already shows the override / pinned value.
-    let keep =
-      (pinned != null &&
-        forOwner.find((b) => String(b.getAttribute("data-veritas-display-score")) === String(pinned))) ||
-      forOwner[0];
-    forOwner.forEach((b) => {
-      if (b !== keep) b.remove();
-    });
-    if (pinned != null) {
-      keep.textContent = String(pinned);
-      keep.setAttribute("data-veritas-display-score", String(pinned));
-      keep.setAttribute("data-veritas-score-key", profileKey);
-      keep.classList.remove("veritas-ig-realness--loading");
-      applyRealnessClass(keep, pinned);
-      keep.title = `Veritas: ${pinned}/100 (override) — click to review`;
+    let kept = null;
+    for (const b of badges) {
+      if (!(b instanceof HTMLElement)) continue;
+      if (b.closest('[data-testid="tweet"], [data-testid="UserCell"], [data-testid="UserDescription"]')) continue;
+      const k = String(b.getAttribute("data-veritas-score-key") || "").toLowerCase();
+      if (k === key && !kept && host.contains(b)) {
+        kept = b;
+        continue;
+      }
+      // Wrong account or duplicate owner badges in the name row → remove.
+      if (host.contains(b) || b.parentElement === host.parentElement) {
+        if (k === key && kept) {
+          b.remove();
+        } else if (k !== key) {
+          b.remove();
+        } else if (!host.contains(b)) {
+          b.remove();
+        }
+      }
     }
-    return keep;
   }
 
   function ensureXProfileNameScore(profileKey) {
     const nameEl = findXProfileHeaderNameNode();
     if (!nameEl) return false;
-    const existing = dedupeXProfileHeaderBadges(profileKey);
-    if (existing && existing.isConnected) return true;
+    const host = getXProfileHeaderNameHost() || nameEl;
+    dedupeXProfileHeaderNameBadges(profileKey);
+
+    const sel = `.veritas-account-badge--x[data-veritas-score-key="${CSS.escape(profileKey)}"]`;
+    if (host.querySelector(sel)) return true;
+
     attachAccountScoreBadge(nameEl, profileKey, false, "veritas-account-badge--x", false);
-    dedupeXProfileHeaderBadges(profileKey);
+    dedupeXProfileHeaderNameBadges(profileKey);
     return true;
   }
 
   function stripXProfileOwnerChromeBadges(profileKey) {
-    document.querySelectorAll(".veritas-account-badge--x[data-veritas-score-key]").forEach((b) => {
+    document.querySelectorAll(`.veritas-account-badge--x[data-veritas-score-key="${CSS.escape(profileKey)}"]`).forEach((b) => {
       if (!(b instanceof HTMLElement)) return;
       if (b.closest('[data-testid="tweet"]')) return;
       if (b.closest('[data-testid="UserCell"]')) return;
-      const key = normalizeScoreHandle(b.getAttribute("data-veritas-score-key") || "");
-      if (key !== normalizeScoreHandle(profileKey)) return;
       const inHeaderName =
         b.closest('[data-testid="UserName"], [data-testid="User-Name"], [data-testid="User-Names"]') &&
-        b.closest('[data-testid="primaryColumn"]');
+        b.closest('[data-testid="primaryColumn"]') &&
+        !b.closest('[data-testid="UserDescription"]');
       if (inHeaderName) return;
-      b.remove();
+      // Join date / tabs / counts — remove owner score chrome.
+      if (!b.closest('[data-testid="UserDescription"]')) b.remove();
     });
+    dedupeXProfileHeaderNameBadges(profileKey);
   }
 
   function scanXAccountBadges() {
@@ -2395,13 +2363,25 @@
         continue;
       }
 
-      // Profile owner header is owned by ensureXProfileNameScore (one badge only).
-      if (profileKey && normalizeScoreHandle(scoreKey) === normalizeScoreHandle(profileKey)) {
-        const inTweet = a.closest('[data-testid="tweet"]');
-        if (!inTweet) {
+      // Profile owner: ensureXProfileNameScore owns the header name. Skip chrome + duplicate name badges.
+      if (profileKey && scoreKey.toLowerCase() === profileKey.toLowerCase()) {
+        if (!a.closest('[data-testid="tweet"]')) {
           a.setAttribute(SOCIAL_TAG, "1");
           continue;
         }
+      }
+
+      // Never attach a non-owner badge into the profile header name row.
+      if (
+        profileKey &&
+        scoreKey.toLowerCase() !== profileKey.toLowerCase() &&
+        a.closest('[data-testid="UserName"], [data-testid="User-Name"], [data-testid="User-Names"]') &&
+        a.closest('[data-testid="primaryColumn"]') &&
+        !a.closest('[data-testid="tweet"]') &&
+        !a.closest('[data-testid="UserDescription"]')
+      ) {
+        a.setAttribute(SOCIAL_TAG, "1");
+        continue;
       }
 
       // Prefer the display-name link; skip bare @handle links in the same User-Name row.
@@ -2433,10 +2413,7 @@
       if (tweet) xTweetMarkBadgedForUser(tweet, scoreKey);
     }
 
-    if (profileKey) {
-      stripXProfileOwnerChromeBadges(profileKey);
-      dedupeXProfileHeaderBadges(profileKey);
-    }
+    if (profileKey) dedupeXProfileHeaderNameBadges(profileKey);
   }
 
   function scanLinkedInAccountBadges() {
