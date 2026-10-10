@@ -1380,6 +1380,7 @@
     udaysharmaaaaa: 96,
     harshavardhanbajoria: 79,
     "its.vinit_vijal__": 76,
+    dapp_dost: 73,
     "li:anindita-bhowmick-387449395": 88,
     "li:adarsh-chauhan-b87609225": 91,
     "li:namanbansal013": 95,
@@ -1448,6 +1449,7 @@
     if (bare === "udaysharmaaaaa") return 96;
     if (bare === "harshavardhanbajoria") return 79;
     if (bare === "its.vinit_vijal__") return 76;
+    if (bare === "dapp_dost") return 73;
 
     if (bare.includes("sparsh") || hint.includes("sparsh")) {
       if (k.startsWith("li:") || isLinkedIn) return 93;
