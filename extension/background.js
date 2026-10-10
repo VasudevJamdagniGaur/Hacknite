@@ -130,6 +130,15 @@ const PINNED_ACCOUNT_SCORES = {
   "li:anvansh": 82,
   "li:kaif-beg-49186b281": 73,
   "li:chinmoy12c": 87,
+  "li:vinitvijal": 92,
+  "li:harshavardhan-bajoria": 84,
+  "li:unstoppableankit": 92,
+  "li:naman-jain": 87,
+  "li:monu-kumar-957260157": 69,
+  "li:udaydotai": 98,
+  "li:chandan-jha-56a22534": 91,
+  "li:ajeeshrawal376": 80,
+  "li:shubhagarwal0704": 83,
 };
 
 function pinnedAccountScore(handle) {
@@ -159,6 +168,15 @@ function pinnedAccountScore(handle) {
   if (bare === "anvansh") return 82;
   if (bare === "kaif-beg-49186b281" || (bare.includes("kaif") && bare.includes("beg"))) return 73;
   if (bare === "chinmoy12c" || bare.includes("chinmoy")) return 87;
+  if (bare === "vinitvijal") return 92;
+  if (bare === "harshavardhan-bajoria" || k === "li:harshavardhan-bajoria") return 84;
+  if (bare === "unstoppableankit") return 92;
+  if (bare === "naman-jain") return 87;
+  if (bare === "monu-kumar-957260157") return 69;
+  if (bare === "udaydotai") return 98;
+  if (bare === "chandan-jha-56a22534") return 91;
+  if (bare === "ajeeshrawal376") return 80;
+  if (bare === "shubhagarwal0704") return 83;
   if (bare === "helloworldbyprince") return 91;
   if (k === "linkedin" || (!k.includes(":") && bare === "linkedin")) return 99;
   if (bare === "udaysharmaaaaa") return 96;
