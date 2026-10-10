@@ -114,13 +114,21 @@ const PINNED_ACCOUNT_SCORES = {
   geekroom__: 100,
   "talk.with.adarsh": 92,
   namanbansal013: 94,
+  helloworldbyprince: 91,
+  linkedin: 99,
+  udaysharmaaaaa: 96,
+  harshavardhanbajoria: 79,
+  "its.vinit_vijal__": 76,
   "li:anindita-bhowmick-387449395": 88,
   "li:adarsh-chauhan-b87609225": 91,
   "li:namanbansal013": 95,
   "x:deepigoyal": 88,
   "x:amitkilhor": 81,
+  "x:pradeepto_src": 79,
   "li:tejashseth11": 94,
   "li:anvansh": 82,
+  "li:kaif-beg-49186b281": 73,
+  "li:chinmoy12c": 87,
 };
 
 function pinnedAccountScore(handle) {
@@ -134,6 +142,7 @@ function pinnedAccountScore(handle) {
   }
   const bare = k.replace(/^(li|x|reddit):/, "");
   if (k.startsWith("x:") && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
+  if (k.startsWith("x:") && (bare === "pradeepto_src" || bare.includes("pradeepto_src"))) return 79;
   if (
     k.startsWith("x:") &&
     (bare.includes("amitkilhor") ||
@@ -147,6 +156,13 @@ function pinnedAccountScore(handle) {
   if (bare.includes("rajan")) return 90;
   if (bare === "tejashseth11" || bare.includes("tejashseth")) return 94;
   if (bare === "anvansh") return 82;
+  if (bare === "kaif-beg-49186b281" || (bare.includes("kaif") && bare.includes("beg"))) return 73;
+  if (bare === "chinmoy12c" || bare.includes("chinmoy")) return 87;
+  if (bare === "helloworldbyprince") return 91;
+  if (k === "linkedin" || (!k.includes(":") && bare === "linkedin")) return 99;
+  if (bare === "udaysharmaaaaa") return 96;
+  if (bare === "harshavardhanbajoria") return 79;
+  if (bare === "its.vinit_vijal__") return 76;
   // "sparsh" in username → platform-specific scores.
   if (bare.includes("sparsh")) {
     if (k.startsWith("li:")) return 93;

@@ -1375,13 +1375,21 @@
     geekroom__: 100,
     "talk.with.adarsh": 92,
     namanbansal013: 94,
+    helloworldbyprince: 91,
+    linkedin: 99,
+    udaysharmaaaaa: 96,
+    harshavardhanbajoria: 79,
+    "its.vinit_vijal__": 76,
     "li:anindita-bhowmick-387449395": 88,
     "li:adarsh-chauhan-b87609225": 91,
     "li:namanbansal013": 95,
     "x:deepigoyal": 88,
     "x:amitkilhor": 81,
+    "x:pradeepto_src": 79,
     "li:tejashseth11": 94,
     "li:anvansh": 82,
+    "li:kaif-beg-49186b281": 73,
+    "li:chinmoy12c": 87,
   };
 
   function normalizeScoreHandle(scoreKey) {
@@ -1415,6 +1423,7 @@
     const onX = k.startsWith("x:") || isX;
 
     if (onX && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
+    if (onX && (bare === "pradeepto_src" || bare.includes("pradeepto_src") || hint.includes("pradeepto"))) return 79;
     if (
       onX &&
       (bare.includes("amitkilhor") ||
@@ -1432,6 +1441,13 @@
       return 94;
     }
     if (bare === "anvansh" || hint.includes("anvansh")) return 82;
+    if (bare === "kaif-beg-49186b281" || (hint.includes("kaif") && hint.includes("beg"))) return 73;
+    if (bare === "chinmoy12c" || hint.includes("chinmoy")) return 87;
+    if (bare === "helloworldbyprince" || hint.includes("helloworldbyprince")) return 91;
+    if (k === "linkedin" || bare === "linkedin") return 99;
+    if (bare === "udaysharmaaaaa") return 96;
+    if (bare === "harshavardhanbajoria") return 79;
+    if (bare === "its.vinit_vijal__") return 76;
 
     if (bare.includes("sparsh") || hint.includes("sparsh")) {
       if (k.startsWith("li:") || isLinkedIn) return 93;
@@ -1462,9 +1478,8 @@
     }
     const remembered = rememberedDisplayedScore(scoreKey);
     if (remembered != null) {
-      let score = remembered;
-      if (anchorHasApnaMartBio(anchor) && score < 80) {
-        score = 80;
+      let score = applyBioCompanyFloor(remembered, anchor);
+      if (score !== remembered) {
         rememberDisplayedScore(scoreKey, score);
         syncLinkedInBadgesToStableScores();
       }
@@ -1473,20 +1488,22 @@
     const resolved = isLinkedIn
       ? { score: clamp(Math.round(Number(rawScore) || 0), 0, 100), boosted: false }
       : applyVerifiedAccountBonus(rawScore, anchor);
-    if (anchorHasApnaMartBio(anchor) && resolved.score < 80) {
-      resolved.score = 80;
-    }
+    resolved.score = applyBioCompanyFloor(resolved.score, anchor);
     rememberDisplayedScore(scoreKey, resolved.score);
     syncLinkedInBadgesToStableScores();
     return { ...resolved, pinned: false };
   }
 
-  function textHasApnaMart(text) {
-    return /@?\s*apna[\s._-]*mart\b/i.test(String(text || ""));
+  function bioCompanyFloorFromText(text) {
+    const t = String(text || "");
+    let floor = 0;
+    if (/@?\s*apna[\s._-]*mart\b/i.test(t)) floor = Math.max(floor, 80);
+    if (/@?\s*zomato\b/i.test(t)) floor = Math.max(floor, 75);
+    return floor;
   }
 
-  function anchorHasApnaMartBio(anchor) {
-    if (!(anchor instanceof Element)) return false;
+  function nearbyAccountBioText(anchor) {
+    if (!(anchor instanceof Element)) return "";
     const scopes = [
       anchor.closest(".pv-text-details__left-panel"),
       anchor.closest(".ph5"),
@@ -1494,12 +1511,20 @@
       anchor.closest(".update-components-actor"),
       anchor.closest("section.artdeco-card"),
       anchor.closest(".feed-shared-update-v2, .occludable-update, .entity-result"),
+      anchor.closest("header"),
+      anchor.closest("article"),
     ].filter(Boolean);
     const root = scopes[0];
     if (!root || root.matches("main, body, html, aside, [role='complementary']")) {
-      return textHasApnaMart(anchor.textContent || "");
+      return String(anchor.textContent || "");
     }
-    return textHasApnaMart(String(root.innerText || root.textContent || "").slice(0, 2500));
+    return String(root.innerText || root.textContent || "").slice(0, 2500);
+  }
+
+  function applyBioCompanyFloor(score, anchor) {
+    const n = clamp(Math.round(Number(score) || 0), 0, 100);
+    const floor = bioCompanyFloorFromText(nearbyAccountBioText(anchor));
+    return floor ? Math.max(n, floor) : n;
   }
 
   /**
