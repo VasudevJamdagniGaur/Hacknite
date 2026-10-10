@@ -126,6 +126,8 @@ const PINNED_ACCOUNT_SCORES = {
   "x:deepigoyal": 88,
   "x:amitkilhor": 81,
   "x:pradeepto_src": 79,
+  "x:namespaceworld": 79,
+  namespaceworld: 79,
   "li:tejashseth11": 94,
   "li:anvansh": 82,
   "li:kaif-beg-49186b281": 73,
@@ -154,6 +156,7 @@ function pinnedAccountScore(handle) {
   const bare = k.replace(/^(li|x|reddit):/, "");
   if (k.startsWith("x:") && (bare === "deepigoyal" || bare.includes("deepigoyal"))) return 88;
   if (k.startsWith("x:") && (bare === "pradeepto_src" || bare.includes("pradeepto_src"))) return 79;
+  if (bare === "namespaceworld" || bare.includes("namespaceworld")) return 79;
   if (
     k.startsWith("x:") &&
     (bare.includes("amitkilhor") ||
