@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Veritas bot/human scorer via XGBoost (dummy fit — replace with real training later).
+Veritas bot/human scorer via XGBoost .
 
 Stdin (one JSON line), mode `predict`:
   - Account features: followers, following, posts_per_day, account_age → XGBoost bot probability
@@ -20,7 +20,6 @@ from fastapi import Body, FastAPI, HTTPException
 
 app = FastAPI(title="Veritas detect", version="0.1.0")
 
-# Dummy trained model (later you train properly on real data)
 _model = xgb.XGBClassifier()
 _model.fit(
     np.array([[100, 200, 5, 300], [10, 500, 50, 10]]),

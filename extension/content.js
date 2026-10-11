@@ -126,10 +126,17 @@
     "tv",
   ]);
 
+  const VERITAS_STYLE_VER = "0.2.68";
+
   function injectStyleOnce() {
-    if (document.getElementById(STYLE_ID)) return;
-    const style = document.createElement("style");
-    style.id = STYLE_ID;
+    let style = document.getElementById(STYLE_ID);
+    if (style && style.getAttribute("data-veritas-style-ver") === VERITAS_STYLE_VER) return;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID;
+      document.documentElement.appendChild(style);
+    }
+    style.setAttribute("data-veritas-style-ver", VERITAS_STYLE_VER);
     style.textContent = `
       .veritas-card {
         margin-top: 10px;
@@ -798,6 +805,7 @@
         background: #e7e9ea;
         border-color: #e7e9ea;
       }
+      .veritas-factcheck-root,
       .veritas-x-factcheck-root {
         position: absolute;
         top: 6px;
@@ -809,10 +817,41 @@
         gap: 8px;
         pointer-events: none;
       }
+      .veritas-factcheck-root > *,
       .veritas-x-factcheck-root > * {
         pointer-events: auto;
       }
-      .veritas-x-factcheck-btn {
+      /* LinkedIn: inline next to ··· / dismiss (same control look as X) */
+      .veritas-li-factcheck-root {
+        position: relative;
+        top: auto;
+        right: auto;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-end;
+        justify-content: center;
+        margin: 0 2px;
+        z-index: 5;
+        flex: 0 0 auto;
+      }
+      .veritas-li-factcheck-root.veritas-li-factcheck-root--abs {
+        position: absolute;
+        top: 8px;
+        right: 84px;
+        margin: 0;
+      }
+      .veritas-factcheck-root .veritas-fc-popover {
+        width: min(360px, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+      }
+      .veritas-li-factcheck-root .veritas-fc-popover {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        z-index: 2147483646;
+      }
+      .veritas-x-factcheck-btn,
+      .veritas-li-factcheck-btn {
         appearance: none;
         width: 34px;
         height: 34px;
@@ -831,15 +870,18 @@
         color: #71767b;
         transition: background 0.15s ease, color 0.15s ease;
       }
-      .veritas-x-factcheck-btn:hover:not(:disabled) {
+      .veritas-x-factcheck-btn:hover:not(:disabled),
+      .veritas-li-factcheck-btn:hover:not(:disabled) {
         background: rgba(29, 155, 240, 0.1);
         color: #1d9bf0;
       }
-      .veritas-x-factcheck-btn:disabled {
+      .veritas-x-factcheck-btn:disabled,
+      .veritas-li-factcheck-btn:disabled {
         opacity: 0.5;
         cursor: wait;
       }
-      .veritas-x-factcheck-btn svg {
+      .veritas-x-factcheck-btn svg,
+      .veritas-li-factcheck-btn svg {
         display: block;
         width: 18px;
         height: 18px;
@@ -1043,7 +1085,7 @@
         filter: brightness(1.09);
       }
     `;
-    document.documentElement.appendChild(style);
+    if (!style.isConnected) document.documentElement.appendChild(style);
   }
 
   function clamp(n, min, max) {
@@ -1603,6 +1645,7 @@
     "li:ajeeshrawal376": 80,
     "li:shubhagarwal0704": 83,
     "li:gourav-jaat": 77,
+    "li:prasiddhijain": 93,
   };
 
   function normalizeScoreHandle(scoreKey) {
@@ -1669,6 +1712,13 @@
     if (bare === "ajeeshrawal376") return 80;
     if (bare === "shubhagarwal0704") return 83;
     if (bare === "gourav-jaat") return 77;
+    if (
+      bare === "prasiddhijain" ||
+      bare.includes("prasiddhijain") ||
+      (hint.includes("prasiddhi") && hint.includes("jain"))
+    ) {
+      return 93;
+    }
     if (bare === "helloworldbyprince" || hint.includes("helloworldbyprince")) return 91;
     if (k === "linkedin" || bare === "linkedin") return 99;
     if (bare === "udaysharmaaaaa") return 96;
@@ -1706,16 +1756,27 @@
     const remembered = rememberedDisplayedScore(scoreKey);
     if (remembered != null) {
       let score = applyBioCompanyFloor(remembered, anchor);
+      let boosted = false;
+      if (isLinkedIn) {
+        const v = applyLinkedInVerifiedFloor(score, anchor);
+        score = v.score;
+        boosted = v.boosted;
+      }
       if (score !== remembered) {
         rememberDisplayedScore(scoreKey, score);
         syncLinkedInBadgesToStableScores();
       }
-      return { score, boosted: false, pinned: false };
+      return { score, boosted, pinned: false };
     }
     const resolved = isLinkedIn
-      ? { score: clamp(Math.round(Number(rawScore) || 0), 0, 100), boosted: false }
+      ? applyLinkedInVerifiedFloor(rawScore, anchor)
       : applyVerifiedAccountBonus(rawScore, anchor);
     resolved.score = applyBioCompanyFloor(resolved.score, anchor);
+    if (isLinkedIn) {
+      const v = applyLinkedInVerifiedFloor(resolved.score, anchor);
+      resolved.score = v.score;
+      resolved.boosted = resolved.boosted || v.boosted;
+    }
     rememberDisplayedScore(scoreKey, resolved.score);
     syncLinkedInBadgesToStableScores();
     return { ...resolved, pinned: false };
@@ -1846,10 +1907,27 @@
     'svg[aria-label*="Verified" i]',
     '[aria-label*="Verified account" i]',
     '[aria-label*="Verified profile" i]',
+    '[aria-label*="verifications" i]',
+    '[aria-label*="verification" i]',
     '[data-testid="icon-verified"]',
     '[data-testid*="verified" i]',
     'span[title*="Verified" i]',
+    'a[href*="verifications"]',
+    'button[aria-label*="verifications" i]',
   ].join(", ");
+
+  function labelLooksVerified(lab) {
+    const s = String(lab || "").toLowerCase();
+    return (
+      s.includes("verified account") ||
+      s.includes("verified profile") ||
+      s.includes("identity verified") ||
+      s.includes("instagram verified") ||
+      s.includes("verifications") ||
+      s.includes("linkedin verified") ||
+      (s.includes("view") && s.includes("verification"))
+    );
+  }
 
   function hasVerifiedBadgeNearAnchor(anchor) {
     if (!anchor || !anchor.isConnected) return false;
@@ -1860,20 +1938,19 @@
       } catch {
         /* invalid selector in edge engines */
       }
-      const lab = (node.getAttribute?.("aria-label") || node.getAttribute?.("title") || "").toLowerCase();
-      if (
-        lab.includes("verified account") ||
-        lab.includes("verified profile") ||
-        lab.includes("identity verified") ||
-        lab.includes("instagram verified")
-      ) {
-        return true;
-      }
+      const lab = node.getAttribute?.("aria-label") || node.getAttribute?.("title") || "";
+      if (labelLooksVerified(lab)) return true;
       node = node.parentElement;
     }
     for (let sib = anchor.nextElementSibling, i = 0; sib && i < 8; sib = sib.nextElementSibling, i++) {
       try {
-        if (sib.matches?.("[aria-label*='Verified' i], [aria-label*='verified' i]")) return true;
+        if (
+          sib.matches?.(
+            "[aria-label*='Verified' i], [aria-label*='verified' i], [aria-label*='verifications' i], [aria-label*='verification' i]"
+          )
+        ) {
+          return true;
+        }
         if (sib.querySelector?.(VERIFIED_NEAR_SELECTORS)) return true;
       } catch {
         /* ignore */
@@ -1881,8 +1958,29 @@
     }
     for (let sib = anchor.previousElementSibling, i = 0; sib && i < 8; sib = sib.previousElementSibling, i++) {
       try {
-        if (sib.matches?.("[aria-label*='Verified' i], [aria-label*='verified' i]")) return true;
+        if (
+          sib.matches?.(
+            "[aria-label*='Verified' i], [aria-label*='verified' i], [aria-label*='verifications' i], [aria-label*='verification' i]"
+          )
+        ) {
+          return true;
+        }
         if (sib.querySelector?.(VERIFIED_NEAR_SELECTORS)) return true;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // LinkedIn profile header: verification control often sits beside the h1 name.
+    if (isLinkedIn) {
+      const profileScope =
+        anchor.closest(".pv-text-details__left-panel") ||
+        anchor.closest(".ph5") ||
+        anchor.closest("section.artdeco-card") ||
+        anchor.closest("main") ||
+        anchor.parentElement;
+      try {
+        if (profileScope?.querySelector?.(VERIFIED_NEAR_SELECTORS)) return true;
       } catch {
         /* ignore */
       }
@@ -1895,6 +1993,20 @@
     const b = clamp(Math.round(Number(baseScore) || 0), 0, 100);
     if (!hasVerifiedBadgeNearAnchor(anchor)) return { score: b, boosted: false };
     return { score: clamp(b + 20, 0, 100), boosted: true };
+  }
+
+  /** LinkedIn identity verification → authenticity floor of 75. */
+  function applyLinkedInVerifiedFloor(baseScore, anchor) {
+    const b = clamp(Math.round(Number(baseScore) || 0), 0, 100);
+    if (!isLinkedIn || !hasVerifiedBadgeNearAnchor(anchor)) return { score: b, boosted: false };
+    return { score: Math.max(b, 75), boosted: true };
+  }
+
+  function verifiedScoreTitleSuffix(boosted) {
+    if (!boosted) return "";
+    return isLinkedIn
+      ? " · LinkedIn verified (min 75)"
+      : " · +20 verified account (max 100)";
   }
 
   const SCORE_REVIEW_LS = "veritas.scoreReview.v1.";
@@ -2024,7 +2136,7 @@
   }
 
   function applyAccountBadgeTitles(badge, score, src, botPct, verifiedBoost) {
-    let suffix = verifiedBoost ? " · +20 verified account (max 100)" : "";
+    let suffix = verifiedScoreTitleSuffix(verifiedBoost);
     if (src === "xgboost") {
       badge.title =
         (botPct != null
@@ -2115,7 +2227,7 @@
         badge.classList.remove("veritas-ig-realness--loading");
         applyRealnessClass(badge, score);
         badge.title = boosted
-          ? `Veritas: ${score}/100 · +20 verified account (max 100) — click to review`
+          ? `Veritas: ${score}/100${verifiedScoreTitleSuffix(true)} — click to review`
           : `Veritas: ${score}/100 — click to review`;
       } catch {
         /* keep loading ellipsis */
@@ -2146,7 +2258,7 @@
         badge.classList.remove("veritas-ig-realness--loading");
         applyRealnessClass(badge, score);
         badge.title = boosted
-          ? `Veritas: ${score}/100 (fallback) · +20 verified account (max 100) — click to review`
+          ? `Veritas: ${score}/100 (fallback)${verifiedScoreTitleSuffix(true)} — click to review`
           : `Veritas: ${score}/100 (fallback) — click to review`;
       });
   }
@@ -3066,6 +3178,17 @@
   function postTextFromElement(el) {
     const xText = el.querySelector('[data-testid="tweetText"]');
     if (xText && xText.textContent) return xText.textContent.trim();
+
+    if (isLinkedIn) {
+      const liText =
+        el.querySelector(".update-components-text .break-words") ||
+        el.querySelector(".feed-shared-update-v2__description .break-words") ||
+        el.querySelector(".update-components-text") ||
+        el.querySelector(".feed-shared-text") ||
+        el.querySelector(".feed-shared-inline-show-more-text");
+      const t = (liText?.innerText || "").replace(/\s+/g, " ").trim();
+      if (t) return t;
+    }
 
     const generic = el.innerText || el.textContent || "";
     return generic.trim();
@@ -4107,7 +4230,16 @@
 
   function findCandidatePosts() {
     const set = new Set();
-    for (const sel of ["article", '[role="article"]']) {
+    const sels = ["article", '[role="article"]'];
+    if (isLinkedIn) {
+      sels.push(
+        ".feed-shared-update-v2",
+        ".occludable-update",
+        "[data-urn*='activity']",
+        "[data-id*='activity']"
+      );
+    }
+    for (const sel of sels) {
       document.querySelectorAll(sel).forEach((node) => {
         if (node && node.nodeType === 1) set.add(node);
       });
@@ -4204,14 +4336,14 @@
   }
 
   function ensureFactCheckLogoOnPost(articleEl) {
-    // Legacy fact-check logo removed — strip leftovers, but keep the X Fact Check control.
+    // Legacy fact-check logo removed — strip leftovers, but keep Fact Check controls.
     if (!articleEl) return;
     articleEl
       .querySelectorAll(
-        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor:not(.veritas-x-factcheck-root), .veritas-fc-logo-btn"
+        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-anchor:not(.veritas-factcheck-root), .veritas-fc-logo-btn"
       )
       .forEach((n) => {
-        if (n.closest(".veritas-x-factcheck-root")) return;
+        if (n.closest(".veritas-factcheck-root")) return;
         n.remove();
       });
   }
@@ -4368,15 +4500,168 @@
     panel.appendChild(actions);
   }
 
-  function ensureXFactCheckControl(postEl) {
-    if (!isX || !(postEl instanceof HTMLElement)) return null;
+  function resolveLinkedInPostCard(postEl) {
+    if (!(postEl instanceof HTMLElement)) return null;
+    if (postEl.matches(".feed-shared-update-v2")) return postEl;
+    const inner = postEl.querySelector(".feed-shared-update-v2");
+    if (inner instanceof HTMLElement) return inner;
+    return postEl;
+  }
+
+  function findLinkedInControlMenuMount(card) {
+    if (!(card instanceof HTMLElement)) return null;
+
+    const menuBtn =
+      card.querySelector("button.feed-shared-control-menu__trigger") ||
+      card.querySelector(".feed-shared-control-menu button[aria-expanded]") ||
+      card.querySelector('button[aria-label*="Open control menu" i]') ||
+      card.querySelector('button[aria-label*="control menu" i]') ||
+      card.querySelector('button[aria-label*="More actions" i]') ||
+      card.querySelector(".feed-shared-control-menu button") ||
+      card.querySelector(".feed-shared-update-v2__control-menu-container button");
+
+    if (menuBtn && menuBtn.parentElement) {
+      return { parent: menuBtn.parentElement, before: menuBtn };
+    }
+
+    const menuWrap =
+      card.querySelector(".feed-shared-update-v2__control-menu-container") ||
+      card.querySelector(".feed-shared-control-menu");
+    if (menuWrap?.parentElement) {
+      return { parent: menuWrap.parentElement, before: menuWrap };
+    }
+
+    // Feed posts show ··· + dismiss (X) at top-right — insert before that cluster.
+    const headerBtns = Array.from(
+      card.querySelectorAll(
+        ".update-components-actor button, .feed-shared-actor button, .update-components-header button, .feed-shared-update-v2 button"
+      )
+    );
+    let best = null;
+    for (const b of headerBtns) {
+      if (b.closest(".veritas-factcheck-root")) continue;
+      const label = `${b.getAttribute("aria-label") || ""} ${b.getAttribute("title") || ""}`.toLowerCase();
+      if (!/(more|control menu|dismiss|hide|remove|don’t want|dont want|not interested|\.\.\.)/i.test(label)) {
+        continue;
+      }
+      // Prefer control-menu / more over dismiss so we sit left of ···
+      const score = /control menu|more actions|more/i.test(label) ? 2 : 1;
+      if (!best || score > best.score) best = { parent: b.parentElement, before: b, score };
+    }
+    if (best?.parent) return { parent: best.parent, before: best.before };
+
+    // Last resort: first button in the top-right of the card header
+    const actorMeta =
+      card.querySelector(".update-components-actor__meta") ||
+      card.querySelector(".update-components-actor") ||
+      card.querySelector(".feed-shared-actor");
+    if (actorMeta) {
+      const row = actorMeta.parentElement || actorMeta;
+      const btns = Array.from(row.querySelectorAll(":scope > button, :scope > div > button")).filter(
+        (b) => !b.closest(".veritas-factcheck-root")
+      );
+      if (btns.length && btns[0].parentElement) {
+        return { parent: btns[0].parentElement, before: btns[0] };
+      }
+    }
+    return null;
+  }
+
+  function ensureLinkedInFactCheckControl(postEl) {
+    const card = resolveLinkedInPostCard(postEl);
+    if (!card) return null;
+
+    // One control per post card (avoid nested duplicates)
+    let root = card.querySelector(":scope > .veritas-factcheck-root, .veritas-factcheck-root[data-veritas-li-factcheck]");
+    if (root && root.closest(".feed-shared-update-v2") !== card && card.matches(".feed-shared-update-v2")) {
+      // Prefer the card-scoped root; drop misplaced ones under this card later via remount
+      root = card.querySelector(".veritas-factcheck-root[data-veritas-li-factcheck]");
+    }
+
+    const mount = findLinkedInControlMenuMount(card);
+    if (!root) {
+      root = document.createElement("div");
+      root.className = "veritas-factcheck-root veritas-li-factcheck-root";
+      root.setAttribute("data-veritas-li-factcheck", "1");
+      if (mount) {
+        root.classList.remove("veritas-li-factcheck-root--abs");
+        mount.parent.insertBefore(root, mount.before);
+      } else {
+        root.classList.add("veritas-li-factcheck-root--abs");
+        const style = window.getComputedStyle(card);
+        if (style.position === "static") card.style.position = "relative";
+        card.appendChild(root);
+      }
+    } else if (mount && root.parentElement !== mount.parent) {
+      root.classList.remove("veritas-li-factcheck-root--abs");
+      mount.parent.insertBefore(root, mount.before);
+    } else if (!mount && !root.classList.contains("veritas-li-factcheck-root--abs")) {
+      root.classList.add("veritas-li-factcheck-root--abs");
+      const style = window.getComputedStyle(card);
+      if (style.position === "static") card.style.position = "relative";
+      if (root.parentElement !== card) card.appendChild(root);
+    }
+
+    // Same shield button look as X
+    let btn = root.querySelector(".veritas-x-factcheck-btn");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "veritas-x-factcheck-btn";
+      btn.title = "Fact Check";
+      btn.setAttribute("aria-label", "Fact Check");
+      btn.innerHTML = factCheckIconSvg();
+      root.insertBefore(btn, root.firstChild);
+    }
+
+    let panel = root.querySelector(".veritas-fc-popover");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.className = "veritas-fc-popover";
+      panel.setAttribute("data-veritas-li-factcheck-panel", "1");
+      root.appendChild(panel);
+    }
+
+    if (btn.dataset.veritasFcBound !== "1") {
+      btn.dataset.veritasFcBound = "1";
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        runFactCheckForPost(card, btn, panel);
+      });
+    }
+    return { root, btn, panel, card };
+  }
+
+  function scanLinkedInFactCheckControls() {
+    if (!isLinkedIn) return;
+    const cards = document.querySelectorAll(
+      ".feed-shared-update-v2, [data-urn*='activity'][role='article'], [role='article'][data-urn*='activity']"
+    );
+    cards.forEach((card) => {
+      try {
+        ensureLinkedInFactCheckControl(card);
+      } catch {
+        /* ignore single-card failures */
+      }
+    });
+  }
+
+  function ensureFactCheckControl(postEl) {
+    if ((!isX && !isLinkedIn) || !(postEl instanceof HTMLElement)) return null;
+
+    if (isLinkedIn) {
+      return ensureLinkedInFactCheckControl(postEl);
+    }
+
     const style = window.getComputedStyle(postEl);
     if (style.position === "static") postEl.style.position = "relative";
 
-    let root = postEl.querySelector(".veritas-x-factcheck-root");
+    let root = postEl.querySelector(".veritas-factcheck-root");
     if (!root) {
       root = document.createElement("div");
-      root.className = "veritas-x-factcheck-root veritas-fc-anchor veritas-fc-anchor--x-actions";
+      root.className =
+        "veritas-factcheck-root veritas-x-factcheck-root veritas-fc-anchor veritas-fc-anchor--x-actions";
       root.setAttribute("data-veritas-x-factcheck", "1");
       postEl.appendChild(root);
     }
@@ -4405,13 +4690,18 @@
       btn.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        runXFactCheckForPost(postEl, btn, panel);
+        runFactCheckForPost(postEl, btn, panel);
       });
     }
     return { root, btn, panel };
   }
 
-  async function runXFactCheckForPost(postEl, btn, panel) {
+  /** @deprecated alias — prefer ensureFactCheckControl */
+  function ensureXFactCheckControl(postEl) {
+    return ensureFactCheckControl(postEl);
+  }
+
+  async function runFactCheckForPost(postEl, btn, panel) {
     if (!btn || !panel || btn.disabled) return;
     if (panel.classList.contains("veritas-fc-popover--open") && panel.dataset.veritasFcLoaded === "1") {
       panel.classList.remove("veritas-fc-popover--open");
@@ -4444,7 +4734,7 @@
     try {
       const data = await factCheckChatClient(statement);
       if (panel.dataset.veritasFactCheckDismissed === "1") return;
-      renderSociteaFactCheckResult(panel, data, () => runXFactCheckForPost(postEl, btn, panel));
+      renderSociteaFactCheckResult(panel, data, () => runFactCheckForPost(postEl, btn, panel));
       panel.dataset.veritasFcLoaded = "1";
     } catch (e) {
       if (panel.dataset.veritasFactCheckDismissed === "1") return;
@@ -4463,7 +4753,7 @@
       retry.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        runXFactCheckForPost(postEl, btn, panel);
+        runFactCheckForPost(postEl, btn, panel);
       });
       actions.appendChild(retry);
       panel.appendChild(actions);
@@ -4619,9 +4909,9 @@
       );
     }
 
-    /** X: top-right Fact Check → SociTea /generateContent (True/False style verdicts). */
-    if (isX) {
-      ensureXFactCheckControl(el);
+    /** X / LinkedIn: Fact Check → SociTea /generateContent (True/False style verdicts). */
+    if (isX || isLinkedIn) {
+      ensureFactCheckControl(el);
     }
 
     const text = postTextFromElement(el);
@@ -4643,13 +4933,13 @@
 
   function scanFeed() {
     injectStyleOnce();
-    // Remove legacy fact-check logo injections — keep X Fact Check control.
+    // Remove legacy fact-check logo injections — keep Fact Check controls.
     document
       .querySelectorAll(
-        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-logo-btn, .veritas-fc-anchor:not(.veritas-x-factcheck-root)"
+        "[data-veritas-fc-wrap], [data-veritas-fc-logo], .veritas-fc-logo-btn, .veritas-fc-anchor:not(.veritas-factcheck-root)"
       )
       .forEach((n) => {
-        if (n.closest(".veritas-x-factcheck-root")) return;
+        if (n.closest(".veritas-factcheck-root")) return;
         n.remove();
       });
     if (!isInstagram) {
@@ -4659,12 +4949,23 @@
         .forEach((n) => n.remove());
     }
     const posts = findCandidatePosts();
-    for (const el of posts) processPost(el);
+    for (const el of posts) {
+      processPost(el);
+      // Remount if LinkedIn/X SPA wiped the control after first tag.
+      if ((isX || isLinkedIn) && !el.querySelector(".veritas-factcheck-root")) {
+        ensureFactCheckControl(el);
+      }
+    }
+    // LinkedIn feed cards often aren't tagged as articles — mount Fact Check on every update card.
+    if (isLinkedIn) scanLinkedInFactCheckControls();
   }
 
   function runSocialAccountScanners() {
     if (isX) scanXAccountBadges();
-    if (isLinkedIn) scanLinkedInAccountBadges();
+    if (isLinkedIn) {
+      scanLinkedInAccountBadges();
+      scanLinkedInFactCheckControls();
+    }
     if (isReddit) scanRedditAccountBadges();
   }
 
